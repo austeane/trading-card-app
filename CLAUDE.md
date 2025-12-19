@@ -12,8 +12,9 @@ A sports trading card creation app. Users upload photos, crop them via drag-and-
 # Install dependencies
 pnpm install
 
-# Development (SST-first - this is the primary dev workflow)
-AWS_PROFILE=prod npx sst dev       # Runs full stack with live AWS resources
+# Development (two terminals required)
+AWS_PROFILE=prod npx sst dev       # Terminal 1: SST infra + Lambda
+cd client && pnpm dev              # Terminal 2: Vite frontend
 
 # Build
 pnpm build
@@ -27,6 +28,12 @@ pnpm lint
 # Deploy to AWS
 AWS_PROFILE=prod npx sst deploy
 ```
+
+## Pre-commit Hooks
+
+Husky + lint-staged runs on every commit:
+- `pnpm type-check` - Full monorepo type checking
+- `eslint --fix` - Auto-fix lint issues on staged files
 
 ## Development Workflow
 
@@ -46,8 +53,9 @@ Access the app at `http://localhost:5173`.
 
 **Environment variables:** `client/.env.development` contains `VITE_API_URL` and `VITE_ROUTER_URL`. Update these if SST outputs change (new stage, redeployed Lambda).
 
-**In production:** Same-origin routing via CloudFront Router (`/api/*`, `/u/*`, `/r/*`).
-**In dev:** Frontend calls Lambda URL directly (CORS enabled), media via Router.
+**URL routing:**
+- **Production:** Same-origin via CloudFront Router (`/api/*`, `/u/*`, `/r/*`)
+- **Dev:** Frontend calls Lambda URL directly (CORS enabled), media via Router
 
 ## Architecture
 
@@ -99,13 +107,23 @@ Access the app at `http://localhost:5173`.
 @shared/* → ./shared/src/*
 ```
 
+### Canvas Renderer (client/src/renderCard.ts)
+
+Generates 825x1125 PNG cards client-side:
+- Full-bleed image with gradient overlay
+- Text overlays: name, position/team, jersey number, photo credit
+- Uses shared constants from `shared/src/constants.ts`
+
 ## Development Notes
 
 - Card status flow: `draft` → `submitted` → `rendered`
-- Crop coordinates stored as normalized 0-1 floats, rotation as 0/90/180/270 degrees
+- Crop coordinates stored as normalized 0-1 floats (rotation disabled for v1)
+- Card dimensions: 825x1125 pixels (constants in `shared/src/constants.ts`)
 - Max upload size: 15MB, allowed types: JPEG, PNG, WebP (render must be PNG)
 - S3 keys are versioned with unique upload IDs to avoid cache issues:
   - `uploads/original/<cardId>/<uploadId>.<ext>`
   - `uploads/crop/<cardId>/<uploadId>.<ext>`
   - `renders/<cardId>/<renderId>.png`
 - Public PATCH cannot set `status` or `renderKey` (server-controlled fields)
+- Presign endpoint requires card to exist (prevents orphan uploads)
+- Submit endpoint requires valid renderKey and draft status
