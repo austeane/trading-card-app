@@ -43,3 +43,9 @@ bun.lockb
 
 # sst
 .sst
+
+# playwright
+.playwright-mcp/
+
+# generated
+repomix-output.xml

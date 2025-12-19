@@ -21,17 +21,41 @@
     "lint": "turbo lint",
     "postinstall": "turbo build --filter=shared --filter=server",
     "test": "turbo test",
-    "type-check": "turbo type-check"
+    "type-check": "turbo type-check",
+    "prepare": "husky"
   },
-  "keywords": ["hono", "react", "vite", "monorepo", "turbo"],
+  "keywords": [
+    "hono",
+    "react",
+    "vite",
+    "monorepo",
+    "turbo"
+  ],
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/aws-lambda": "8.10.159",
-    "turbo": "^2.5.5"
+    "eslint": "^9.39.2",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "turbo": "^2.5.5",
+    "typescript-eslint": "^8.50.0"
   },
   "peerDependencies": {
     "typescript": "^5.7.3"
   },
   "dependencies": {
     "sst": "3.17.25"
+  },
+  "lint-staged": {
+    "client/src/**/*.{ts,tsx}": [
+      "eslint --fix"
+    ],
+    "server/src/**/*.ts": [
+      "eslint --fix"
+    ],
+    "shared/src/**/*.ts": [
+      "eslint --fix"
+    ]
   }
 }

@@ -1,11 +1,13 @@
 {
   "name": "server",
   "version": "0.0.1",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch src/dev.ts"
+    "dev": "tsx watch src/dev.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.955.0",
@@ -18,7 +20,11 @@
     "sst": "3.17.25"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/node": "^22.19.2",
-    "tsx": "^4.20.5"
+    "eslint": "^9.39.2",
+    "globals": "^16.5.0",
+    "tsx": "^4.20.5",
+    "typescript-eslint": "^8.49.0"
   }
 }

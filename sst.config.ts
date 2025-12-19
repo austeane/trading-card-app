@@ -17,7 +17,8 @@ export default $config({
       cors: {
         allowHeaders: ["*"],
         allowMethods: ["GET", "HEAD", "POST", "PUT"],
-        allowOrigins: ["http://localhost:5173", "http://localhost:3000"],
+        // Allow all origins for presigned uploads - bucket is private, URLs are short-lived
+        allowOrigins: ["*"],
       },
     });
 
@@ -36,7 +37,13 @@ export default $config({
     const api = new sst.aws.Function("Api", {
       handler: "server/src/lambda.handler",
       runtime: "nodejs20.x",
-      url: true,
+      url: {
+        cors: {
+          allowOrigins: ["*"],
+          allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+          allowHeaders: ["Content-Type", "Authorization"],
+        },
+      },
       link: [mediaBucket, cardsTable],
     });
 
@@ -55,6 +62,10 @@ export default $config({
       build: {
         command: "pnpm build",
         output: "dist",
+      },
+      environment: {
+        VITE_API_URL: api.url,
+        VITE_ROUTER_URL: router.url,
       },
       router: { instance: router },
     });

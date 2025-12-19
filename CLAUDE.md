@@ -30,13 +30,24 @@ AWS_PROFILE=prod npx sst deploy
 
 ## Development Workflow
 
-**Use `AWS_PROFILE=prod npx sst dev` as the primary dev command.** This:
-- Runs the Vite dev server and proxies it through SST Router
-- Runs the Lambda locally with proper `Resource.*` bindings
-- Makes `/api/*`, `/u/*`, `/r/*` all work same-origin
-- Access the app via the Router URL printed on startup
+**Run in two terminals:**
 
-Do NOT run `pnpm dev` or `server/src/dev.ts` separately - they won't have access to SST Resource bindings.
+Terminal 1 - SST (deploys infra, runs Lambda):
+```bash
+AWS_PROFILE=prod npx sst dev
+```
+
+Terminal 2 - Vite (frontend dev server):
+```bash
+cd client && pnpm dev
+```
+
+Access the app at `http://localhost:5173`.
+
+**Environment variables:** `client/.env.development` contains `VITE_API_URL` and `VITE_ROUTER_URL`. Update these if SST outputs change (new stage, redeployed Lambda).
+
+**In production:** Same-origin routing via CloudFront Router (`/api/*`, `/u/*`, `/r/*`).
+**In dev:** Frontend calls Lambda URL directly (CORS enabled), media via Router.
 
 ## Architecture
 

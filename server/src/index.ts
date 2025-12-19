@@ -1,5 +1,4 @@
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { Resource } from 'sst'
 import { randomUUID } from 'node:crypto'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -10,7 +9,7 @@ import type { ApiResponse, CardDesign, CardStatus, CropRect } from 'shared'
 
 const app = new Hono()
 
-app.use(cors())
+// Note: CORS is handled by Lambda Function URL configuration, not Hono middleware
 
 const s3 = new S3Client({})
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
@@ -60,21 +59,35 @@ const toRotateDeg = (value: unknown): CropRect['rotateDeg'] | undefined => {
   return undefined
 }
 
+const clamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max)
+
 const pickCrop = (value: unknown): CropRect | undefined => {
   if (!isRecord(value)) return undefined
 
-  const x = toNumber(value.x)
-  const y = toNumber(value.y)
-  const w = toNumber(value.w)
-  const h = toNumber(value.h)
+  const rawX = toNumber(value.x)
+  const rawY = toNumber(value.y)
+  const rawW = toNumber(value.w)
+  const rawH = toNumber(value.h)
 
-  if (x === undefined || y === undefined || w === undefined || h === undefined) {
+  if (rawX === undefined || rawY === undefined || rawW === undefined || rawH === undefined) {
     return undefined
   }
 
+  // Clamp values to valid ranges
+  // x, y: 0 to 1
+  // w, h: > 0 to 1
+  const x = clamp(rawX, 0, 1)
+  const y = clamp(rawY, 0, 1)
+  const w = clamp(rawW, 0.001, 1) // minimum 0.1% width
+  const h = clamp(rawH, 0.001, 1) // minimum 0.1% height
+
+  // Ensure crop doesn't extend beyond image bounds
+  const clampedW = Math.min(w, 1 - x)
+  const clampedH = Math.min(h, 1 - y)
+
   const rotateDeg = toRotateDeg(value.rotateDeg) ?? 0
 
-  return { x, y, w, h, rotateDeg }
+  return { x, y, w: clampedW, h: clampedH, rotateDeg }
 }
 
 const pickPhoto = (value: unknown): CardDesign['photo'] | undefined => {
@@ -199,6 +212,18 @@ app.post('/uploads/presign', async (c) => {
 
   if (kind !== 'original' && kind !== 'crop' && kind !== 'render') {
     return badRequest(c, 'kind is invalid')
+  }
+
+  // Verify card exists before issuing presigned URL (prevents orphan uploads)
+  const existingCard = await ddb.send(
+    new GetCommand({
+      TableName: Resource.Cards.name,
+      Key: { id: cardId },
+    })
+  )
+
+  if (!existingCard.Item) {
+    return c.json({ error: 'Card not found' }, 404)
   }
 
   const length = typeof contentLength === 'number' ? contentLength : Number(contentLength)
@@ -334,16 +359,33 @@ app.post('/cards/:id/submit', async (c) => {
     return c.json({ error: 'Card not found' }, 404)
   }
 
+  const card = existing.Item as CardDesign
+
+  // Enforce status transition: only draft can be submitted
+  if (card.status !== 'draft') {
+    return badRequest(c, `Card is already ${card.status}`)
+  }
+
   const body = await getJsonBody(c)
-  if (body !== null && !isRecord(body)) return badRequest(c, 'Invalid request body')
+  if (!isRecord(body)) return badRequest(c, 'Invalid request body')
+
+  // Require renderKey
+  if (typeof body.renderKey !== 'string' || body.renderKey.trim() === '') {
+    return badRequest(c, 'renderKey is required')
+  }
+
+  const renderKey = body.renderKey as string
+
+  // Validate renderKey format: must be renders/<cardId>/<id>.png
+  const renderKeyPattern = new RegExp(`^renders/${id}/[a-f0-9-]+\\.png$`)
+  if (!renderKeyPattern.test(renderKey)) {
+    return badRequest(c, 'Invalid renderKey format')
+  }
 
   const now = nowIso()
   const next: CardDesign = {
-    ...(existing.Item as CardDesign),
-    renderKey:
-      typeof body?.renderKey === 'string'
-        ? body.renderKey
-        : (existing.Item as CardDesign).renderKey,
+    ...card,
+    renderKey,
     status: 'submitted',
     updatedAt: now,
   }
@@ -362,7 +404,8 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404))
 
 app.onError((err, c) => {
   console.error('Server error:', err)
-  return c.json({ error: 'Internal Server Error' }, 500)
+  const message = err instanceof Error ? err.message : 'Internal Server Error'
+  return c.json({ error: message }, 500)
 })
 
 export default app

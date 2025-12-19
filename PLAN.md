@@ -10,40 +10,148 @@
 - Repo scaffolded from `bun create bhvr@latest` (client/server/shared + Turbo) and converted to pnpm.
 - `sst.config.ts` is wired with Router + S3 bucket + Dynamo table + Lambda URL + StaticSite, and Lambda entrypoint is implemented in `server/src/lambda.ts`.
 - Server: Hono API with presign + cards CRUD + submit endpoints; uses AWS SDK + `sst` Resource for S3/Dynamo; dev server on port 3000.
-- Client: Vite + React with TanStack Router/Query + Tailwind; builder UI with `react-easy-crop`; Vite proxy for `/api`.
+- Client: Vite + React with TanStack Router/Query + Tailwind; builder UI with `react-easy-crop`; env vars for API/Router URLs.
 - Shared types include `CardDesign`/`CropRect` and related metadata.
 
-## Completed Work (so far)
-- Infra wired: Router/Bucket/Dynamo/Function/StaticSite in `sst.config.ts`.
-- Lambda handler added via `hono/aws-lambda` (`server/src/lambda.ts`).
-- API endpoints implemented: `/api/uploads/presign`, `/api/cards`, `/api/cards/:id` (GET/PATCH), `/api/cards/:id/submit`.
-- Client UI scaffolded with form + crop panel + preview and draft save wiring.
-- Local dev verified with separate `pnpm -C client dev`, `pnpm -C server dev`, and `sst dev`.
+## Completed Work
 
-## Next Steps (near-term)
-- Wire client to presigned upload flow (original upload + store `originalKey` and dimensions).
-- Save crop metadata into the draft on create/update.
-- Implement canvas render, presigned upload for renders, and submit flow.
-- Add admin list endpoint using the `status` GSI and a lightweight review screen.
-- Add validation/error UI; tighten limits; finalize lifecycle + prod CORS origins in `sst.config.ts`.
+### Phase 0: Infra Skeleton ✅
+- Lambda entrypoint (`hono/aws-lambda`)
+- Vite + TanStack Router + Query wiring
+- SST Router + S3 bucket + DynamoDB + Lambda URL + StaticSite
+
+### Phase 1: Card Builder UI ✅
+- Form with all card fields (type, team, position, jersey, name, photo credit)
+- Crop UI with `react-easy-crop` (drag-to-pan, scroll-to-zoom)
+- Live preview with player name, position/team, crop dimensions
+- Zoom In/Out, Rotate 90°, Reset controls
+
+### Phase 2: AWS Uploads ✅
+- Presigned upload API (`POST /api/uploads/presign`)
+- Client uploads original photo to S3 on draft create
+- Versioned S3 keys (`uploads/original/<cardId>/<uploadId>.<ext>`)
+- Photo dimensions stored in card record
+- CORS configured on Lambda Function URL and S3 bucket
+
+### Phase 3: Submission Pipeline ✅
+- Canvas render (`renderCard.ts`) - 825x1125 full-bleed card
+- Image covers entire card with gradient overlay at bottom
+- Text overlaid on image (name, position/team, jersey number, photo credit)
+- Presigned upload for renders (`renders/<cardId>/<renderId>.png`)
+- Submit endpoint stores `renderKey` and sets `status=submitted`
+- Download PNG link displayed after submission
+
+### Dev Workflow ✅
+- Two terminals: `AWS_PROFILE=prod npx sst dev` + `cd client && pnpm dev`
+- Environment variables in `client/.env.development` (VITE_API_URL, VITE_ROUTER_URL)
+- Frontend calls Lambda URL directly in dev (CORS enabled)
+- Media URLs use Router URL in dev (S3 via CloudFront)
+
+### Security ✅
+- PATCH endpoint cannot set `status` or `renderKey` (server-controlled)
+- Presigned uploads with content-type validation
+- Max upload size: 15MB
+- Allowed types: JPEG, PNG, WebP (renders must be PNG)
+
+## Known Issues (Fixed)
+
+### 1. Crop Values Are Wrong ✅ FIXED
+**File:** `client/src/App.tsx:413`
+
+Fixed `handleCropComplete` to use 1st argument (percentages) instead of 2nd (pixels), with clamping to 0-1 range.
+
+### 2. Cropper Aspect Ratio Doesn't Match Render ✅ FIXED
+**Files:** `shared/src/constants.ts`, `client/src/App.tsx`, `client/src/renderCard.ts`
+
+Created shared constants (`CARD_WIDTH`, `CARD_HEIGHT`, `CARD_ASPECT`) and updated both cropper and render to use them. Container aspect ratio also updated from `aspect-[3/4]` to `aspect-[825/1125]`.
+
+### 3. Rotation Rendering Is Broken for 90°/270° ✅ DISABLED FOR V1
+**File:** `client/src/App.tsx`
+
+Rotation UI controls removed and rotation hardcoded to 0. Rotation math needs proper safe-area implementation - deferred to future version.
+
+### 4. Production URLs Bypass Router (Same-Origin Broken) ✅ FIXED
+**File:** `client/src/App.tsx:7-17`
+
+Now gates on `import.meta.env.DEV` so production uses relative `/api` and media paths, ensuring same-origin routing via CloudFront Router.
+
+### 5. S3 CORS Missing Production Origin ✅ FIXED
+**File:** `sst.config.ts:20`
+
+Changed to `allowOrigins: ["*"]` since bucket is private and only accessible via short-lived presigned URLs.
+
+---
+
+## Next Steps (Phase 4+)
+
+### Hardening
+- [ ] Error handling - Better error messages, retry logic for failed uploads
+- [ ] Form validation - Required fields, jersey number format, name length limits
+- [ ] Loading states - Skeleton loaders, progress indicators during render
+- [ ] S3 lifecycle rules - Auto-delete orphaned uploads after X days
+
+### API/Server Hardening
+- [ ] Presign requires card exists - Verify card ID before issuing presigned URL to prevent orphan uploads
+- [ ] Submit requires renderKey - Reject submit if `renderKey` missing or doesn't match `renders/${id}/...png`
+- [ ] Submit requires complete card - Enforce `photo.originalKey` + dimensions + crop before allowing submit
+- [ ] Enforce status transitions - Only allow `draft → submitted` (not `submitted → submitted`)
+- [ ] Server-side crop validation - Clamp crop values: `0 <= x,y <= 1`, `0 < w,h <= 1`, `x+w <= 1`, `y+h <= 1`
+- [ ] Presigned POST for strict size enforcement - Current presigned PUT allows client to lie about `contentLength`
+
+### Code Cleanup
+- [ ] Merge duplicate presign functions - `requestPresign` and `requestPresignForBlob` can be unified
+- [ ] Align naming - `team` vs `teamId` is confusing; pick one (or store both if ID + display name needed)
+- [ ] Keep cropper on local URL - Don't switch from local blob → CloudFront URL after upload (avoids CORS flicker)
+- [ ] Disable Submit unless crop exists - Button enabled without `normalizedCrop` causes confusing errors
+- [ ] Font loading for canvas - Add `await document.fonts.ready` before rendering if using custom fonts
+- [ ] Canvas image quality - Set `ctx.imageSmoothingEnabled = true` and `ctx.imageSmoothingQuality = 'high'`
+
+### UX Upgrades
+- [ ] Photo upload prominence - Larger drop zone, drag-and-drop support, clearer empty state
+- [ ] Live card preview - Show real-time preview of final card layout (not just crop), reuse `renderCard` logic
+- [ ] Button state feedback - Show "Saving..." / "Creating..." on buttons during mutations, not just status text
+- [ ] Submit enablement hint - Add helper text "Upload a photo to enable submission" when Submit is disabled
+- [ ] Status consolidation - Single status indicator instead of multiple inline messages
+- [ ] Field validation UI - Inline error messages, required field indicators, jersey number format hint
+- [ ] Page title - Change from "BHVR" to "Trading Card Studio"
+- [ ] Upload progress - Show progress bar during photo upload (especially for large files)
+- [ ] Success celebration - Brief animation or visual feedback when card is submitted successfully
+- [ ] Keyboard navigation - Tab order, Enter to submit form sections
+
+### Admin/Management
+- [ ] Admin list endpoint - Query cards by status using GSI (`byStatus`)
+- [ ] Card gallery - View all submitted cards
+- [ ] Status management - Mark cards as `rendered`, delete drafts
+
+### Polish
+- [ ] Card templates - Different designs/themes
+- [ ] Font loading - Custom fonts for card text (currently system-ui)
+- [ ] Image optimization - Resize before upload, WebP support
+- [ ] Mobile UX - Touch-friendly cropping
+
+### Production
+- [ ] Auth - Protect card creation/submission (or admin routes only)
+- [ ] Rate limiting - Prevent abuse
+- [ ] Monitoring - CloudWatch logs, error tracking
+- [ ] CI/CD - Automated deployments
 
 ## Key Decisions & Considerations
 - **Frontend:** Vite + React + Tailwind + TanStack Router + TanStack Query.
 - **Backend:** Hono on AWS Lambda (via `hono/aws-lambda`).
 - **Infra:** SST v3 with a Router and a media bucket; same-origin routing for `/api/*`, `/u/*`, `/r/*`, and the web app.
 - **Rendering:** Browser canvas for final image generation (deterministic, no html2canvas).
-- **Crop UX:** Drag-and-drop crop with a dedicated crop component (select `react-easy-crop`), persist crop as a normalized rectangle.
+- **Crop UX:** Drag-and-drop crop with `react-easy-crop`, persist crop as normalized rectangle + rotation.
 - **Storage:** S3 for uploads and renders, DynamoDB for metadata.
 - **Security:** Presigned uploads, private buckets with CloudFront OAC access; minimal public exposure.
 
-## Dev Mode Strategy (SST-first)
-- **Primary dev command:** `AWS_PROFILE=prod npx sst dev`
-- SST orchestrates the full stack; do not run `server/src/dev.ts` separately
-- Access the app via the SST Router URL (printed on startup)
-- All routes work same-origin: `/api/*`, `/u/*`, `/r/*`
-- `Resource.Media.name` and `Resource.Cards.name` are injected by SST runtime
-- Vite dev server runs on `:5173` but is proxied through SST Router
-- No need for env fallbacks or separate Vite proxy config in production-like dev
+## Dev Mode Strategy (SST + Vite)
+- **Two terminals:** `AWS_PROFILE=prod npx sst dev` + `cd client && pnpm dev`
+- SST runs Lambda with `Resource.*` bindings, deploys infra to AWS
+- Vite runs locally on `:5173` (or `:5174`) with env vars from `.env.development`
+- Frontend calls Lambda URL directly in dev (CORS enabled on Lambda)
+- Media URLs use Router URL in dev (S3 only accessible via CloudFront)
+- **Production:** Same-origin routing via Router (`/api/*`, `/u/*`, `/r/*`)
+- **Dev:** Direct Lambda calls + Router for media
 
 ## S3 Key Versioning Strategy
 - **Versioned keys:** each upload gets a unique ID to avoid cache invalidation issues
@@ -76,18 +184,17 @@
 - **S3**
   - `media` bucket (private, CloudFront access only)
   - `uploads/` and `renders/` prefixes
-  - lifecycle for `uploads/` (expire after N days)
+  - lifecycle for `uploads/` (expire after N days) - TODO
   - CORS for direct browser uploads (prod origin + localhost for dev)
 - **DynamoDB**
   - table `Cards` for draft/submitted metadata
   - GSI: `status` (PK) + `createdAt` (SK) for admin listing
 
-## Repo Structure (adapted from bhvr)
+## Repo Structure
 - `client/` (Vite + React + TanStack Router/Query)
 - `server/` (Hono Lambda app)
 - `shared/` (types + Zod schemas)
 - `sst.config.ts` (infra and routing)
-- Add `infra/` if we want to break out stacks later
 
 ## Data Model (in `shared/`)
 - `CardDesign`
@@ -102,85 +209,82 @@
 ## API Surface (Hono)
 - `POST /api/uploads/presign`
   - input: `{ cardId, contentType, contentLength, kind: "original" | "crop" | "render" }`
-  - validates size + content type (e.g. jpeg/png/webp)
-  - output: `{ uploadUrl, key, publicUrl, method, fields? }`
-  - note: prefer presigned POST if we need strict size/type enforcement
-- `POST /api/cards`
-  - create draft
-- `GET /api/cards/:id`
-  - fetch draft
-- `PATCH /api/cards/:id`
-  - update draft + crop metadata
-- `POST /api/cards/:id/submit`
-  - mark submitted; include `renderKey`
+  - validates size + content type (jpeg/png/webp, render must be png)
+  - output: `{ uploadUrl, key, publicUrl, method }`
+- `POST /api/cards` – create draft
+- `GET /api/cards/:id` – fetch draft
+- `PATCH /api/cards/:id` – update draft + crop metadata
+- `POST /api/cards/:id/submit` – mark submitted with `renderKey`
 
 ## Upload & Render Flow
-1. Client requests presign for original upload (`kind=original`).
-2. Client uploads to S3 directly, stores `originalKey` in draft.
-3. Client stores crop metadata (and optionally uploads a cropped derivative with `kind=crop`).
-4. Client renders final card to canvas and uploads via presign (`kind=render`).
-5. Client calls `submit` with `renderKey` + form data.
+1. Client creates draft → gets card ID
+2. Client requests presign for original upload (`kind=original`)
+3. Client uploads to S3 directly, stores `originalKey` in draft via PATCH
+4. Client stores crop metadata (and optionally uploads cropped derivative)
+5. Client renders final card to canvas (825x1125 full-bleed)
+6. Client uploads render via presign (`kind=render`)
+7. Client calls `submit` with `renderKey`
+8. Server sets `status=submitted` and stores `renderKey`
 
-## S3 Object Key Scheme
-- `uploads/original/<cardId>.<ext>`
-- `uploads/crop/<cardId>.jpg` (optional)
-- `renders/<cardId>.png`
+## Canvas Render Details (`renderCard.ts`)
+- Card dimensions: 825x1125 pixels
+- Full-bleed image covering entire card
+- Gradient overlay at bottom (350px) for text readability
+- Text elements:
+  - "TRADING CARD" label (top left)
+  - Jersey number watermark (top right, semi-transparent)
+  - Player name (bottom, over gradient)
+  - Position / Team (below name)
+  - Jersey number badge (below position)
+  - Photo credit (bottom right)
+- Border decorations (subtle white lines)
 
-## Crop UX & Rendering
-- Use `react-easy-crop` with drag/pinch/scroll for crop and zoom.
-- Persist crop rectangle in normalized image coordinates (0..1) plus rotation.
-- Canvas renderer uses a consistent template geometry (825x1125).
-- Handle EXIF orientation in-browser prior to rendering.
+## Crop UX Details
+- `react-easy-crop` with drag/pinch/scroll for crop and zoom
+- Controls: Zoom In, Zoom Out, Rotate 90°, Reset
+- Crop rectangle stored as normalized coordinates (0..1) plus rotation (0/90/180/270)
+- Card aspect ratio: 825:1125 (approx 0.73:1)
 
-## Infra Plan (SST)
-- Create `media` bucket with `access: "cloudfront"`.
-- Create `cards` Dynamo table with `id` hash key and GSI on `status` + `createdAt`.
-- Create Hono Lambda with `url: true`, link bucket + table, Lambda entrypoint uses `hono/aws-lambda`.
-- Create Router:
-  - `router.route("/api", api.url, { rewrite: { regex: "^/api/(.*)$", to: "/$1" } })`
-  - `router.routeBucket("/u", bucket, { rewrite: { regex: "^/u/(.*)$", to: "/uploads/$1" } })`
-  - `router.routeBucket("/r", bucket, { rewrite: { regex: "^/r/(.*)$", to: "/renders/$1" } })`
-- Serve `client/` via `sst.aws.StaticSite` with `router: { instance: router }`.
-- Bucket policy and CORS:
-  - Allow CloudFront OAC `s3:GetObject` for media bucket.
-  - Allow Lambda role to sign presigned uploads; scope `s3:PutObject` to `uploads/*` and `renders/*`.
-  - CORS allow `PUT/POST/HEAD` from prod origin and localhost.
+## Suggested Next Milestone (Tight & Realistic)
 
-## Local Dev Workflow
-- `pnpm install`
-- `pnpm dev` for client/server shared builds
-- Vite proxy `/api` to the local Hono server; client calls relative `/api`.
-- `sst dev` for infra + live Lambda (optional). For local dev, use the proxy to avoid CORS and run Vite separately.
-- Provide `.env` files for local endpoints and AWS profiles.
+**Goal:** Fix correctness bugs, make production deployable
 
-## Risks & Mitigations
-- **Node runtime alignment:** keep Lambda entrypoint Node-compatible and avoid runtime-specific APIs.
-- **SST + Router config drift:** keep route patterns and Vite `base` aligned.
-- **Large images and memory:** constrain file size at presign and downscale in browser if needed.
-- **Presigned uploads + OAC:** ensure bucket policy allows presigned writes while keeping reads behind CloudFront.
+1. **Fix crop correctness** ✅ DONE
+   - [x] Correct `onCropComplete` argument usage (use 1st arg, not 2nd)
+   - [x] Unify crop aspect with render aspect (825:1125 = 0.7333)
+   - [x] Disable rotation for v1 (rotation math needs safe-area implementation)
 
-## Completed Cleanup Items
-- Import shared types from `shared` (not `shared/dist`) to keep runtime/bundler behavior consistent.
-- Fix placeholder types in `shared` (e.g. `success` should be `boolean`).
-- Remove Bun-only types from the server build path and use Node types.
+2. **Make production truly same-origin** ✅ DONE
+   - [x] Use relative `/api`, `/u`, `/r` in production build (gate on `import.meta.env.DEV`)
+   - [x] Allow all origins for S3 CORS (bucket is private, URLs are short-lived)
+
+3. **API hardening** ✅ DONE
+   - [x] Presign requires card exists
+   - [x] Submit requires renderKey + correct status + validates format
+   - [x] Clamp crop values on server
+
+4. **Admin/review screen (optional but valuable)**
+   - [ ] List `submitted` cards via GSI (`byStatus`)
+   - [ ] Display final render + metadata for quick approval
+
+---
 
 ## Milestones
-1. **Phase 0: Infra Skeleton (done)**
-   - Lambda entrypoint (`hono/aws-lambda`)
-   - Vite `/api` proxy and client routing
-   - TanStack Router + Query wiring
-2. **Phase 1: Card Builder UI (in progress)**
-   - Form + crop UI + preview shell in place
-3. **Phase 2: AWS Uploads (API done, client pending)**
-   - Presigned upload API exists; client integration next
-4. **Phase 3: Submission Pipeline**
-   - Canvas render, upload final image, submit and persist
-5. **Phase 4: Hardening**
-   - Error handling, validation, logging, lifecycle rules
+1. **Phase 0: Infra Skeleton** ✅
+2. **Phase 1: Card Builder UI** ✅
+3. **Phase 2: AWS Uploads** ✅
+4. **Phase 3: Submission Pipeline** ✅
+5. **Phase 3b: Critical Bug Fixes** ✅
+6. **Phase 4: Hardening** ⚠️ **← Current Priority**
+7. **Phase 4b: UX Upgrades** - Planned
+8. **Phase 5: Admin/Management** - Planned
+9. **Phase 6: Polish** - Planned
+10. **Phase 7: Production** - Planned
 
 ## Open Questions
-- Which domain/subdomain should the Router use?
 - Retention period for `uploads/` and `renders/`?
-- Presigned upload method: PUT vs POST?
-- Store cropped derivative, or only original + crop metadata?
+- Store cropped derivative, or only original + crop metadata? (Currently: original only)
 - Any admin interface required in v1?
+- Custom fonts for card rendering?
+- PATCH semantics - Current impl is "merge and replace" (Get → merge → Put). Cannot unset fields, no optimistic concurrency. Accept for v1 or switch to `UpdateCommand` with explicit SET/REMOVE?
+- Rotation support - Worth fixing rotation math properly, or disable rotation for v1 and add later?
