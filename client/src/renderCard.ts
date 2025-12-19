@@ -1,22 +1,55 @@
-import { CARD_WIDTH, CARD_HEIGHT, type CropRect } from 'shared'
+import { CARD_HEIGHT, CARD_WIDTH, type Card, type CropRect, type TournamentConfig } from 'shared'
 
 const FONT_SANS = '"Sora", "Avenir Next", "Helvetica Neue", system-ui, sans-serif'
 const FONT_DISPLAY = '"Fraunces", "Iowan Old Style", serif'
 
-export type RenderCardInput = {
-  imageUrl: string
-  crop: CropRect
-  firstName: string
-  lastName: string
-  position: string
-  team: string
-  jerseyNumber: string
-  photographer: string
+type Theme = {
+  id: string
+  gradientStart: string
+  gradientEnd: string
+  border: string
+  accent: string
+  label: string
+  nameColor: string
+  meta: string
+  watermark: string
 }
 
-/**
- * Load an image from a URL
- */
+const THEMES: Record<string, Theme> = {
+  classic: {
+    id: 'classic',
+    gradientStart: 'rgba(15, 23, 42, 0)',
+    gradientEnd: 'rgba(15, 23, 42, 0.85)',
+    border: 'rgba(255, 255, 255, 0.1)',
+    accent: 'rgba(255, 255, 255, 0.5)',
+    label: 'rgba(255, 255, 255, 0.65)',
+    nameColor: '#ffffff',
+    meta: 'rgba(255, 255, 255, 0.8)',
+    watermark: 'rgba(255, 255, 255, 0.12)',
+  },
+  noir: {
+    id: 'noir',
+    gradientStart: 'rgba(10, 10, 15, 0)',
+    gradientEnd: 'rgba(10, 10, 15, 0.92)',
+    border: 'rgba(255, 255, 255, 0.18)',
+    accent: 'rgba(255, 255, 255, 0.7)',
+    label: 'rgba(255, 255, 255, 0.72)',
+    nameColor: '#f8fafc',
+    meta: 'rgba(248, 250, 252, 0.85)',
+    watermark: 'rgba(248, 250, 252, 0.2)',
+  },
+}
+
+export type RenderCardInput = {
+  card: Card
+  config: TournamentConfig
+  imageUrl: string
+  resolveAssetUrl: (key: string) => string
+  templateId?: string
+}
+
+const getTheme = (templateId?: string) => THEMES[templateId ?? 'classic'] ?? THEMES.classic
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
@@ -27,10 +60,15 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-/**
- * Apply crop and rotation to get the cropped region
- * Crop values are normalized (0-1), rotateDeg is 0/90/180/270
- */
+async function loadImageSafe(url?: string | null) {
+  if (!url) return null
+  try {
+    return await loadImage(url)
+  } catch {
+    return null
+  }
+}
+
 function drawCroppedImage(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
@@ -42,7 +80,6 @@ function drawCroppedImage(
 ) {
   const { x, y, w, h, rotateDeg } = crop
 
-  // Calculate source rectangle in image pixels
   const srcX = x * img.naturalWidth
   const srcY = y * img.naturalHeight
   const srcW = w * img.naturalWidth
@@ -50,14 +87,12 @@ function drawCroppedImage(
 
   ctx.save()
 
-  // Move to destination center for rotation
   const centerX = destX + destW / 2
   const centerY = destY + destH / 2
   ctx.translate(centerX, centerY)
   ctx.rotate((rotateDeg * Math.PI) / 180)
   ctx.translate(-centerX, -centerY)
 
-  // Draw the cropped region
   ctx.drawImage(img, srcX, srcY, srcW, srcH, destX, destY, destW, destH)
 
   ctx.restore()
@@ -98,11 +133,72 @@ function fitText(
   return minSize
 }
 
-/**
- * Render a trading card to a canvas and return as PNG blob
- */
+function drawLogo(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number
+) {
+  const ratio = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
+  const width = img.naturalWidth * ratio
+  const height = img.naturalHeight * ratio
+  ctx.drawImage(img, x, y, width, height)
+}
+
+function getTeamInfo(card: Card, config: TournamentConfig) {
+  if ('teamId' in card && card.teamId) {
+    const team = config.teams.find((entry) => entry.id === card.teamId)
+    if (team) return team
+  }
+  if ('teamName' in card && card.teamName) {
+    return { id: 'custom', name: card.teamName, logoKey: '' }
+  }
+  return null
+}
+
+function getCardTypeLabel(card: Card, config: TournamentConfig) {
+  const entry = config.cardTypes.find((type) => type.type === card.cardType)
+  return entry?.label ?? card.cardType
+}
+
+function getCardTypeConfig(card: Card, config: TournamentConfig) {
+  return config.cardTypes.find((type) => type.type === card.cardType)
+}
+
+export async function renderCropBlob(input: { imageUrl: string; crop: CropRect }): Promise<Blob> {
+  const { imageUrl, crop } = input
+  const img = await loadImage(imageUrl)
+
+  const srcW = crop.w * img.naturalWidth
+  const srcH = crop.h * img.naturalHeight
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(srcW))
+  canvas.height = Math.max(1, Math.round(srcH))
+  const ctx = canvas.getContext('2d')
+
+  if (!ctx) {
+    throw new Error('Could not get canvas context')
+  }
+
+  drawCroppedImage(ctx, img, crop, 0, 0, canvas.width, canvas.height)
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob)
+        else reject(new Error('Failed to create blob'))
+      },
+      'image/png',
+      1.0
+    )
+  })
+}
+
 export async function renderCard(input: RenderCardInput): Promise<Blob> {
-  const { imageUrl, crop, firstName, lastName, position, team, jerseyNumber, photographer } = input
+  const { card, config, imageUrl, resolveAssetUrl, templateId } = input
+  const theme = getTheme(templateId)
 
   if (document.fonts?.ready) {
     await document.fonts.ready
@@ -117,74 +213,107 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
     throw new Error('Could not get canvas context')
   }
 
-  // Load and draw the player photo full-bleed
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   const img = await loadImage(imageUrl)
+  const crop = card.photo?.crop ?? { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 }
   drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
 
-  // Gradient overlay at bottom for text readability
   const overlayGradient = ctx.createLinearGradient(0, CARD_HEIGHT - 350, 0, CARD_HEIGHT)
-  overlayGradient.addColorStop(0, 'rgba(15, 23, 42, 0)')
-  overlayGradient.addColorStop(1, 'rgba(15, 23, 42, 0.85)')
+  overlayGradient.addColorStop(0, theme.gradientStart)
+  overlayGradient.addColorStop(1, theme.gradientEnd)
   ctx.fillStyle = overlayGradient
   ctx.fillRect(0, CARD_HEIGHT - 350, CARD_WIDTH, 350)
 
-  // Card border
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'
+  ctx.strokeStyle = theme.border
   ctx.lineWidth = 2
   ctx.strokeRect(20, 20, CARD_WIDTH - 40, CARD_HEIGHT - 40)
 
-  // Inner accent line
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
   ctx.lineWidth = 1
   ctx.strokeRect(30, 30, CARD_WIDTH - 60, CARD_HEIGHT - 60)
 
-  // Top badge/label
-  ctx.font = `14px ${FONT_SANS}`
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)'
+  const cardLabel = getCardTypeLabel(card, config).toUpperCase()
+  ctx.font = `13px ${FONT_SANS}`
+  ctx.fillStyle = theme.label
   ctx.textAlign = 'left'
-  fillTextWithLetterSpacing(ctx, 'TRADING CARD', 50, 45, 3)
+  fillTextWithLetterSpacing(ctx, cardLabel, 50, 45, 2.5)
 
-  // Jersey number (large watermark, top right)
-  if (jerseyNumber) {
-    ctx.font = `bold 140px ${FONT_SANS}`
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+  const cardTypeConfig = getCardTypeConfig(card, config)
+  const team = getTeamInfo(card, config)
+  const logoKey =
+    card.cardType === 'player' || card.cardType === 'team-staff'
+      ? team?.logoKey
+      : card.cardType === 'tournament-staff' || card.cardType === 'rare'
+        ? config.branding.tournamentLogoKey
+        : cardTypeConfig?.logoOverrideKey ?? config.branding.orgLogoKey
+
+  const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
+  if (logoImg) {
+    drawLogo(ctx, logoImg, CARD_WIDTH - 170, 40, 120, 80)
+  }
+
+  if (card.cardType !== 'rare' && cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
+    ctx.font = `bold 130px ${FONT_SANS}`
+    ctx.fillStyle = theme.watermark
     ctx.textAlign = 'right'
-    ctx.fillText(jerseyNumber, CARD_WIDTH - 40, 150)
+    ctx.fillText(card.jerseyNumber, CARD_WIDTH - 50, 155)
   }
 
-  // Player name (bottom area, over gradient)
-  const fullName = `${firstName} ${lastName}`.trim()
-  const nameText = fullName || 'Player Name'
-  const nameFontSize = fitText(ctx, nameText, CARD_WIDTH - 100, 56, 34, FONT_DISPLAY)
-  ctx.fillStyle = '#ffffff'
-  ctx.textAlign = 'left'
-  ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
-  ctx.fillText(nameText, 50, CARD_HEIGHT - 180)
+  if (card.cardType === 'rare') {
+    const title = card.title ?? 'Rare Card'
+    const caption = card.caption ?? ''
 
-  // Position and team
-  const positionTeam = [position, team].filter(Boolean).join(' / ')
-  ctx.font = `28px ${FONT_SANS}`
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
-  ctx.fillText(positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130)
+    ctx.strokeStyle = theme.accent
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(120, CARD_HEIGHT / 2 - 40)
+    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 - 40)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(120, CARD_HEIGHT / 2 + 40)
+    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 + 40)
+    ctx.stroke()
 
-  // Jersey number (small, below position)
-  if (jerseyNumber) {
-    ctx.font = `bold 36px ${FONT_SANS}`
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
-    ctx.fillText(`#${jerseyNumber}`, 50, CARD_HEIGHT - 80)
+    const titleSize = fitText(ctx, title, CARD_WIDTH - 200, 52, 28, FONT_DISPLAY)
+    ctx.font = `bold ${titleSize}px ${FONT_DISPLAY}`
+    ctx.fillStyle = theme.nameColor
+    ctx.textAlign = 'center'
+    ctx.fillText(title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5)
+
+    if (caption) {
+      ctx.font = `20px ${FONT_SANS}`
+      ctx.fillStyle = theme.meta
+      ctx.fillText(caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30)
+    }
+  } else {
+    const fullName = [card.firstName, card.lastName].filter(Boolean).join(' ').trim()
+    const nameText = fullName || 'Player Name'
+    const nameFontSize = fitText(ctx, nameText, CARD_WIDTH - 100, 56, 34, FONT_DISPLAY)
+    ctx.fillStyle = theme.nameColor
+    ctx.textAlign = 'left'
+    ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
+    ctx.fillText(nameText, 50, CARD_HEIGHT - 180)
+
+    const positionTeam = [card.position, team?.name].filter(Boolean).join(' / ')
+    ctx.font = `28px ${FONT_SANS}`
+    ctx.fillStyle = theme.meta
+    ctx.fillText(positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130)
+
+    if (cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
+      ctx.font = `bold 36px ${FONT_SANS}`
+      ctx.fillStyle = theme.meta
+      ctx.fillText(`#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80)
+    }
   }
 
-  // Photographer credit (bottom right)
-  if (photographer) {
+  if (card.photographer) {
     ctx.font = `18px ${FONT_SANS}`
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
+    ctx.fillStyle = theme.label
     ctx.textAlign = 'right'
-    ctx.fillText(`Photo: ${photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40)
+    ctx.fillText(`Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40)
   }
 
-  // Convert to blob
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {

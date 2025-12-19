@@ -127,3 +127,46 @@ Generates 825x1125 PNG cards client-side:
 - Public PATCH cannot set `status` or `renderKey` (server-controlled fields)
 - Presign endpoint requires card to exist (prevents orphan uploads)
 - Submit endpoint requires valid renderKey and draft status
+
+## Sentry
+
+Client error tracking uses `@sentry/react` (initialized in `client/src/main.tsx`).
+
+### Error / Exception Tracking
+
+Use `Sentry.captureException(error)` in `catch` blocks or expected failure paths.
+
+### Tracing
+
+Create custom spans for meaningful user actions or API calls:
+
+```javascript
+Sentry.startSpan(
+  { op: "ui.click", name: "Submit Card" },
+  () => {
+    // handler logic
+  },
+);
+```
+
+```javascript
+async function fetchCards() {
+  return Sentry.startSpan(
+    { op: "http.client", name: "GET /api/cards" },
+    async () => {
+      const response = await fetch("/api/cards");
+      return response.json();
+    },
+  );
+}
+```
+
+### Logs
+
+Import `* as Sentry` and use `const { logger } = Sentry` for structured logs.
+
+```javascript
+logger.info("Upload complete", { cardId });
+logger.warn("Retrying upload", { attempt });
+logger.error("Upload failed", { error: String(error) });
+```

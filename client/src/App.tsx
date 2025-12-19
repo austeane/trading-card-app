@@ -1,39 +1,45 @@
-import { useCallback, useMemo, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from 'react'
 import Cropper, { type Area, type MediaSize, type Point } from 'react-easy-crop'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { CARD_ASPECT, type ApiResponse, type CardDesign, type CropRect } from 'shared'
-import { renderCard } from './renderCard'
-
-// In dev mode, use the Lambda URL directly. In production, use relative URLs (Router handles routing).
-const API_BASE =
-  import.meta.env.DEV && import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace(/\/$/, '') // Remove trailing slash
-    : '/api'
-
-// For media URLs (/u/*, /r/*), use Router URL in dev, relative in production
-const MEDIA_BASE =
-  import.meta.env.DEV && import.meta.env.VITE_ROUTER_URL
-    ? import.meta.env.VITE_ROUTER_URL.replace(/\/$/, '')
-    : ''
-
-const api = (path: string) => `${API_BASE}${path}`
-const media = (path: string) => `${MEDIA_BASE}${path}`
+import {
+  CARD_ASPECT,
+  type ApiResponse,
+  type Card,
+  type CardType,
+  type CropRect,
+  type TournamentConfig,
+  type TournamentListEntry,
+  USQC_2025_CONFIG,
+  USQC_2025_TOURNAMENT,
+} from 'shared'
+import { renderCard, renderCropBlob } from './renderCard'
+import { api, assetUrlForKey, media, writeHeaders } from './api'
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 const ALLOWED_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const MAX_NAME_LENGTH = 24
-const MAX_JERSEY_LENGTH = 3
-const JERSEY_PATTERN = /^\d{1,3}$/
+const MAX_TITLE_LENGTH = 48
+const MAX_CAPTION_LENGTH = 120
+const MAX_TEAM_LENGTH = 64
+const MAX_POSITION_LENGTH = 32
+const MAX_PHOTOGRAPHER_LENGTH = 48
+const MAX_JERSEY_LENGTH = 2
+const JERSEY_PATTERN = /^\d{1,2}$/
 const MAX_UPLOAD_RETRIES = 1
+const MAX_IMAGE_DIMENSION = 2600
 
 type FormState = {
-  cardType: string
-  team: string
+  tournamentId: string
+  cardType: CardType | ''
+  teamId: string
   position: string
   jerseyNumber: string
   firstName: string
   lastName: string
+  title: string
+  caption: string
   photographer: string
+  templateId: string
 }
 
 type PhotoState = {
@@ -48,21 +54,28 @@ type UploadedPhoto = {
   publicUrl: string
   width: number
   height: number
+  cropKey?: string
 }
 
 type SavePayload = {
-  type?: string
+  tournamentId?: string
+  cardType?: CardType
+  templateId?: string
+  teamId?: string
   teamName?: string
   position?: string
   jerseyNumber?: string
   firstName?: string
   lastName?: string
+  title?: string
+  caption?: string
   photographer?: string
   photo?: {
     originalKey?: string
     width?: number
     height?: number
     crop?: CropRect
+    cropKey?: string
   }
 }
 
@@ -78,18 +91,22 @@ type PresignResponse = {
 }
 
 type UploadProgress = {
-  kind: 'original' | 'render'
+  kind: 'original' | 'crop' | 'render'
   percent: number
 }
 
 const initialForm: FormState = {
+  tournamentId: '',
   cardType: '',
-  team: '',
+  teamId: '',
   position: '',
   jerseyNumber: '',
   firstName: '',
   lastName: '',
+  title: '',
+  caption: '',
   photographer: '',
+  templateId: 'classic',
 }
 
 const clamp = (value: number, min: number, max: number) =>
@@ -131,10 +148,26 @@ async function fetchHello(): Promise<ApiResponse> {
   return res.json()
 }
 
-async function createCard(payload: SavePayload): Promise<CardDesign> {
+async function fetchTournaments(): Promise<TournamentListEntry[]> {
+  const res = await fetch(api('/tournaments'))
+  if (!res.ok) {
+    throw new Error('Could not load tournaments')
+  }
+  return res.json()
+}
+
+async function fetchTournamentConfig(id: string): Promise<TournamentConfig> {
+  const res = await fetch(api(`/tournaments/${id}`))
+  if (!res.ok) {
+    throw new Error('Could not load tournament config')
+  }
+  return res.json()
+}
+
+async function createCard(payload: SavePayload): Promise<Card> {
   const res = await fetch(api('/cards'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...writeHeaders },
     body: JSON.stringify(payload),
   })
 
@@ -145,10 +178,10 @@ async function createCard(payload: SavePayload): Promise<CardDesign> {
   return res.json()
 }
 
-async function updateCard(id: string, payload: SavePayload): Promise<CardDesign> {
+async function updateCard(id: string, payload: SavePayload): Promise<Card> {
   const res = await fetch(api(`/cards/${id}`), {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...writeHeaders },
     body: JSON.stringify(payload),
   })
 
@@ -166,7 +199,7 @@ async function requestPresignFor(
 ): Promise<PresignResponse> {
   const res = await fetch(api('/uploads/presign'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...writeHeaders },
     body: JSON.stringify({
       cardId,
       contentType: data.type,
@@ -266,10 +299,10 @@ async function uploadToS3(
   throw new Error('Upload failed')
 }
 
-async function submitCard(id: string, renderKey: string): Promise<CardDesign> {
+async function submitCard(id: string, renderKey: string): Promise<Card> {
   const res = await fetch(api(`/cards/${id}/submit`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...writeHeaders },
     body: JSON.stringify({ renderKey }),
   })
 
@@ -280,14 +313,14 @@ async function submitCard(id: string, renderKey: string): Promise<CardDesign> {
   return res.json()
 }
 
-function loadImageDimensions(file: File): Promise<{ width: number; height: number }> {
+function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
 
     img.onload = () => {
       URL.revokeObjectURL(url)
-      resolve({ width: img.naturalWidth, height: img.naturalHeight })
+      resolve(img)
     }
 
     img.onerror = () => {
@@ -299,24 +332,70 @@ function loadImageDimensions(file: File): Promise<{ width: number; height: numbe
   })
 }
 
+async function resizeImageIfNeeded(file: File): Promise<{ file: File; width: number; height: number }> {
+  const img = await loadImageFromFile(file)
+  const width = img.naturalWidth
+  const height = img.naturalHeight
+  const maxDim = Math.max(width, height)
+
+  if (maxDim <= MAX_IMAGE_DIMENSION) {
+    return { file, width, height }
+  }
+
+  const scale = MAX_IMAGE_DIMENSION / maxDim
+  const targetWidth = Math.max(1, Math.round(width * scale))
+  const targetHeight = Math.max(1, Math.round(height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return { file, width, height }
+  }
+
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (result) => {
+        if (result) resolve(result)
+        else reject(new Error('Failed to resize image'))
+      },
+      file.type || 'image/jpeg',
+      0.92
+    )
+  })
+
+  const resizedFile = new File([blob], file.name, { type: blob.type })
+  return { file: resizedFile, width: targetWidth, height: targetHeight }
+}
+
 function App() {
   const [form, setForm] = useState<FormState>(initialForm)
+  const [selectedTournamentId, setSelectedTournamentId] = useState('')
   const [photo, setPhoto] = useState<PhotoState | null>(null)
   const [uploadedPhoto, setUploadedPhoto] = useState<UploadedPhoto | null>(null)
+  const [uploadedCropKey, setUploadedCropKey] = useState<string | null>(null)
   const [mediaSize, setMediaSize] = useState<MediaSize | null>(null)
   const [crop, setCrop] = useState<Point>({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState<Rotation>(0)
   const [normalizedCrop, setNormalizedCrop] = useState<CropRect | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
-  const [savedCard, setSavedCard] = useState<CardDesign | null>(null)
+  const [savedCard, setSavedCard] = useState<Card | null>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle')
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [renderedCardUrl, setRenderedCardUrl] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'rendering' | 'uploading' | 'submitting' | 'done' | 'error'>('idle')
   const [hasEdited, setHasEdited] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
 
   const helloQuery = useQuery({
     queryKey: ['hello'],
@@ -324,19 +403,72 @@ function App() {
     enabled: false,
   })
 
+  const tournamentsQuery = useQuery({
+    queryKey: ['tournaments'],
+    queryFn: fetchTournaments,
+    initialData: [USQC_2025_TOURNAMENT],
+  })
+
+  useEffect(() => {
+    if (!selectedTournamentId && tournamentsQuery.data.length > 0) {
+      setSelectedTournamentId(tournamentsQuery.data[0].id)
+    }
+  }, [selectedTournamentId, tournamentsQuery.data])
+
+  const tournamentQuery = useQuery({
+    queryKey: ['tournament', form.tournamentId],
+    queryFn: () => fetchTournamentConfig(form.tournamentId),
+    enabled: Boolean(form.tournamentId),
+  })
+
+  const tournamentConfig =
+    tournamentQuery.data ??
+    (form.tournamentId === USQC_2025_CONFIG.id ? USQC_2025_CONFIG : null)
+
+  const cardTypeConfig = useMemo(
+    () => tournamentConfig?.cardTypes.find((entry) => entry.type === form.cardType),
+    [form.cardType, tournamentConfig]
+  )
+
+  const selectedTeam = useMemo(() => {
+    if (!tournamentConfig) return null
+    return tournamentConfig.teams.find((team) => team.id === form.teamId) ?? null
+  }, [form.teamId, tournamentConfig])
+
+  useEffect(() => {
+    if (!cardTypeConfig?.positions || cardTypeConfig.positions.length === 0) return
+    if (!form.position) return
+    if (!cardTypeConfig.positions.includes(form.position)) {
+      setForm((prev) => ({ ...prev, position: '' }))
+    }
+  }, [cardTypeConfig?.positions, form.position])
+
   const buildPayload = (): SavePayload => ({
-    type: toOptional(form.cardType),
-    teamName: toOptional(form.team),
+    tournamentId: toOptional(form.tournamentId),
+    cardType: form.cardType || undefined,
+    templateId: toOptional(form.templateId),
+    teamId: toOptional(form.teamId),
+    teamName: selectedTeam?.name,
     position: toOptional(form.position),
     jerseyNumber: toOptional(form.jerseyNumber),
     firstName: toOptional(form.firstName),
     lastName: toOptional(form.lastName),
+    title: toOptional(form.title),
+    caption: toOptional(form.caption),
     photographer: toOptional(form.photographer),
   })
 
+  const buildUpdatePayload = (payload: SavePayload): SavePayload => {
+    const rest = { ...payload }
+    delete rest.tournamentId
+    delete rest.cardType
+    return rest
+  }
+
   const buildPhotoPayload = (
     source: UploadedPhoto | null,
-    cropValue: CropRect | null
+    cropValue: CropRect | null,
+    cropKey?: string | null
   ): SavePayload['photo'] | undefined => {
     if (!source && !cropValue) return undefined
 
@@ -352,11 +484,19 @@ function App() {
       payload.crop = cropValue
     }
 
+    if (cropKey) {
+      payload.cropKey = cropKey
+    }
+
     return payload
   }
 
   const ensureCardId = async (payload: SavePayload) => {
     if (cardId) return cardId
+
+    if (!payload.tournamentId || !payload.cardType) {
+      throw new Error('Select a tournament and card type before saving')
+    }
 
     const card = await createCard(payload)
     setCardId(card.id)
@@ -396,41 +536,118 @@ function App() {
     }
   }
 
+  const uploadCroppedPhoto = async (currentCardId: string, imageUrl: string) => {
+    if (!normalizedCrop) return null
+
+    setUploadProgress({ kind: 'crop', percent: 0 })
+    try {
+      const cropBlob = await renderCropBlob({ imageUrl, crop: normalizedCrop })
+      const presign = await requestPresignFor(currentCardId, cropBlob, 'crop')
+      await uploadToS3(presign, cropBlob, (percent) =>
+        setUploadProgress({ kind: 'crop', percent })
+      )
+      setUploadedCropKey(presign.key)
+      return presign.key
+    } catch {
+      throw new Error('Crop upload failed. Please try again.')
+    } finally {
+      setUploadProgress(null)
+    }
+  }
+
   const hasPhoto = Boolean(photo || uploadedPhoto)
 
   const getValidationErrors = useCallback(() => {
-    const errors: Partial<Record<'firstName' | 'lastName' | 'team' | 'position' | 'photo' | 'crop' | 'jerseyNumber', string>> = {}
+    const errors: Partial<Record<
+      | 'tournamentId'
+      | 'cardType'
+      | 'firstName'
+      | 'lastName'
+      | 'teamId'
+      | 'position'
+      | 'title'
+      | 'caption'
+      | 'photo'
+      | 'crop'
+      | 'jerseyNumber',
+      string
+    >> = {}
 
     const firstName = form.firstName.trim()
     const lastName = form.lastName.trim()
-    const team = form.team.trim()
     const position = form.position.trim()
     const jerseyNumber = form.jerseyNumber.trim()
+    const title = form.title.trim()
+    const caption = form.caption.trim()
 
-    if (!firstName) {
-      errors.firstName = 'First name is required'
-    } else if (firstName.length > MAX_NAME_LENGTH) {
-      errors.firstName = `First name must be ${MAX_NAME_LENGTH} characters or fewer`
+    if (!form.tournamentId) {
+      errors.tournamentId = 'Tournament is required'
     }
 
-    if (!lastName) {
-      errors.lastName = 'Last name is required'
-    } else if (lastName.length > MAX_NAME_LENGTH) {
-      errors.lastName = `Last name must be ${MAX_NAME_LENGTH} characters or fewer`
+    if (!form.cardType) {
+      errors.cardType = 'Card type is required'
     }
 
-    if (!team) errors.team = 'Team is required'
-    if (!position) errors.position = 'Position is required'
+    if (form.cardType === 'rare') {
+      if (!title) {
+        errors.title = 'Title is required'
+      } else if (title.length > MAX_TITLE_LENGTH) {
+        errors.title = `Title must be ${MAX_TITLE_LENGTH} characters or fewer`
+      }
+      if (caption && caption.length > MAX_CAPTION_LENGTH) {
+        errors.caption = `Caption must be ${MAX_CAPTION_LENGTH} characters or fewer`
+      }
+    } else {
+      if (!firstName) {
+        errors.firstName = 'First name is required'
+      } else if (firstName.length > MAX_NAME_LENGTH) {
+        errors.firstName = `First name must be ${MAX_NAME_LENGTH} characters or fewer`
+      }
+
+      if (!lastName) {
+        errors.lastName = 'Last name is required'
+      } else if (lastName.length > MAX_NAME_LENGTH) {
+        errors.lastName = `Last name must be ${MAX_NAME_LENGTH} characters or fewer`
+      }
+
+      if (!position) {
+        errors.position = 'Position is required'
+      } else if (position.length > MAX_POSITION_LENGTH) {
+        errors.position = `Position must be ${MAX_POSITION_LENGTH} characters or fewer`
+      }
+
+      if (cardTypeConfig?.showTeamField && !form.teamId) {
+        errors.teamId = 'Team is required'
+      }
+    }
+
+    if (form.teamId && selectedTeam?.name && selectedTeam.name.length > MAX_TEAM_LENGTH) {
+      errors.teamId = `Team name must be ${MAX_TEAM_LENGTH} characters or fewer`
+    }
 
     if (jerseyNumber && !JERSEY_PATTERN.test(jerseyNumber)) {
-      errors.jerseyNumber = 'Jersey number must be 1-3 digits'
+      errors.jerseyNumber = 'Jersey number must be 1-2 digits'
     }
 
     if (!hasPhoto) errors.photo = 'Photo is required'
     if (!normalizedCrop) errors.crop = 'Crop is required'
 
     return errors
-  }, [form.firstName, form.lastName, form.position, form.team, form.jerseyNumber, hasPhoto, normalizedCrop])
+  }, [
+    form.caption,
+    form.cardType,
+    form.firstName,
+    form.jerseyNumber,
+    form.lastName,
+    form.position,
+    form.teamId,
+    form.title,
+    form.tournamentId,
+    hasPhoto,
+    normalizedCrop,
+    cardTypeConfig,
+    selectedTeam,
+  ])
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -446,13 +663,13 @@ function App() {
 
       if (photo && !uploadedPhoto) {
         const uploaded = await uploadOriginalPhoto(currentCardId)
-        photoPayload = buildPhotoPayload(uploaded, normalizedCrop)
+        photoPayload = buildPhotoPayload(uploaded, normalizedCrop, uploadedCropKey)
       } else if (uploadedPhoto) {
         // Photo already uploaded, just update crop
-        photoPayload = buildPhotoPayload(uploadedPhoto, normalizedCrop)
+        photoPayload = buildPhotoPayload(uploadedPhoto, normalizedCrop, uploadedCropKey)
       } else if (normalizedCrop) {
         // Just crop, no photo
-        photoPayload = buildPhotoPayload(null, normalizedCrop)
+        photoPayload = buildPhotoPayload(null, normalizedCrop, uploadedCropKey)
       }
 
       if (photoPayload) {
@@ -460,7 +677,7 @@ function App() {
       }
 
       // Step 3: Update card with all data
-      const updatedCard = await updateCard(currentCardId, payload)
+      const updatedCard = await updateCard(currentCardId, buildUpdatePayload(payload))
       return updatedCard
     },
     onSuccess: (data) => {
@@ -482,6 +699,10 @@ function App() {
 
       setError(null)
 
+      if (!tournamentConfig) {
+        throw new Error('Tournament config is not available')
+      }
+
       const payload = buildPayload()
       const currentCardId = await ensureCardId(payload)
       const uploaded = uploadedPhoto ?? (photo ? await uploadOriginalPhoto(currentCardId) : null)
@@ -494,27 +715,33 @@ function App() {
         throw new Error('Please set a crop before submitting')
       }
 
-      const photoPayload = buildPhotoPayload(uploaded, normalizedCrop)
+      const imageUrl = photo?.localUrl ?? media(uploaded.publicUrl)
+      const cropKey = uploadedCropKey ?? (await uploadCroppedPhoto(currentCardId, imageUrl))
+
+      const photoPayload = buildPhotoPayload(uploaded, normalizedCrop, cropKey)
       if (photoPayload) {
         payload.photo = photoPayload
       }
 
-      await updateCard(currentCardId, payload)
+      await updateCard(currentCardId, buildUpdatePayload(payload))
 
       // Step 1: Render the card
       setSubmitStatus('rendering')
-      const imageUrl = photo?.localUrl ?? media(uploaded.publicUrl)
       let blob: Blob
       try {
+        const now = new Date().toISOString()
+        const cardForRender = buildCardForRender(now)
+        if (!cardForRender) {
+          throw new Error('Card type and tournament are required')
+        }
+        cardForRender.id = currentCardId
+
         blob = await renderCard({
+          card: cardForRender,
+          config: tournamentConfig,
           imageUrl,
-          crop: normalizedCrop,
-          firstName: form.firstName.trim(),
-          lastName: form.lastName.trim(),
-          position: form.position.trim(),
-          team: form.team.trim(),
-          jerseyNumber: form.jerseyNumber.trim(),
-          photographer: form.photographer.trim(),
+          resolveAssetUrl: assetUrlForKey,
+          templateId: form.templateId,
         })
       } catch {
         throw new Error('Failed to render the card. Please try again.')
@@ -555,7 +782,10 @@ function App() {
 
   const validationErrors = useMemo(() => getValidationErrors(), [getValidationErrors])
   const canSubmit =
-    !submitMutation.isPending && !photoError && Object.keys(validationErrors).length === 0
+    !submitMutation.isPending &&
+    !photoError &&
+    Object.keys(validationErrors).length === 0 &&
+    Boolean(tournamentConfig)
 
   const inputClass = (hasError: boolean) =>
     `mt-2 w-full rounded-xl border ${
@@ -620,44 +850,65 @@ function App() {
     submitStatus === 'rendering' || submitStatus === 'uploading' || submitStatus === 'submitting'
 
   const handleFieldChange = (key: keyof FormState) =>
-    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       setHasEdited(true)
       setError(null)
       setForm((prev) => ({ ...prev, [key]: event.target.value }))
     }
 
-  const handleFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+  const handleCardTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value as CardType | ''
+    setHasEdited(true)
+    setError(null)
+    setForm((prev) => {
+      const next = { ...prev, cardType: value }
+      if (value === 'rare') {
+        return {
+          ...next,
+          teamId: '',
+          position: '',
+          jerseyNumber: '',
+          firstName: '',
+          lastName: '',
+        }
+      }
+      return {
+        ...next,
+        title: '',
+        caption: '',
+        teamId: value === 'player' || value === 'team-staff' ? next.teamId : '',
+        jerseyNumber: value === 'player' ? next.jerseyNumber : '',
+      }
+    })
+  }
 
+  const handleFileSelect = useCallback(async (file: File) => {
     setHasEdited(true)
     setError(null)
 
     if (!ALLOWED_UPLOAD_TYPES.has(file.type)) {
       setPhotoError('Unsupported file type. Use JPG, PNG, or WebP.')
-      event.target.value = ''
       return
     }
 
     if (file.size > MAX_UPLOAD_BYTES) {
       setPhotoError('File is too large. Max size is 15MB.')
-      event.target.value = ''
       return
     }
 
     setPhotoError(null)
 
     try {
-      const dimensions = await loadImageDimensions(file)
-      const localUrl = URL.createObjectURL(file)
+      const resized = await resizeImageIfNeeded(file)
+      const localUrl = URL.createObjectURL(resized.file)
 
       setPhoto((prev) => {
         if (prev) URL.revokeObjectURL(prev.localUrl)
         return {
-          file,
+          file: resized.file,
           localUrl,
-          width: dimensions.width,
-          height: dimensions.height,
+          width: resized.width,
+          height: resized.height,
         }
       })
 
@@ -666,8 +917,11 @@ function App() {
       setUploadStatus('idle')
       setUploadProgress(null)
       setRenderedCardUrl(null)
+      setPreviewUrl(null)
+      setPreviewError(null)
       setSubmitStatus('idle')
       setMediaSize(null)
+      setUploadedCropKey(null)
 
       // Reset crop
       setCrop({ x: 0, y: 0 })
@@ -677,6 +931,33 @@ function App() {
     } catch {
       setError('Failed to load image')
     }
+  }, [])
+
+  const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    void handleFileSelect(file)
+    event.target.value = ''
+  }, [handleFileSelect])
+
+  const handleDrop = useCallback((event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setIsDragging(false)
+    const file = event.dataTransfer.files?.[0]
+    if (file) {
+      void handleFileSelect(file)
+    }
+  }, [handleFileSelect])
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    if (!isDragging) {
+      setIsDragging(true)
+    }
+  }, [isDragging])
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragging(false)
   }, [])
 
   // react-easy-crop onCropComplete: (croppedArea, croppedAreaPixels)
@@ -712,20 +993,150 @@ function App() {
     }
   }
 
+  const resetSession = useCallback(() => {
+    setCardId(null)
+    setSavedCard(null)
+    setUploadedPhoto(null)
+    setUploadedCropKey(null)
+    setUploadStatus('idle')
+    setUploadProgress(null)
+    setRenderedCardUrl(null)
+    setPreviewUrl(null)
+    setPreviewError(null)
+    setSubmitStatus('idle')
+    setHasEdited(false)
+    setError(null)
+    setPhotoError(null)
+    setNormalizedCrop(null)
+    setMediaSize(null)
+    setCrop({ x: 0, y: 0 })
+    setZoom(1)
+    setRotation(0)
+    setPhoto((prev) => {
+      if (prev) URL.revokeObjectURL(prev.localUrl)
+      return null
+    })
+  }, [])
+
+  const handleTournamentContinue = () => {
+    if (!selectedTournamentId) return
+    resetSession()
+    setForm((prev) => ({
+      ...initialForm,
+      tournamentId: selectedTournamentId,
+      templateId: prev.templateId || 'classic',
+    }))
+  }
+
+  const handleTournamentReset = () => {
+    resetSession()
+    setForm(initialForm)
+  }
+
   const handleSaveDraft = () => {
     setHasEdited(true)
     saveMutation.mutate()
   }
 
   const displayName = useMemo(() => {
+    if (form.cardType === 'rare') {
+      const title = form.title.trim()
+      return title.length > 0 ? title : 'Rare Card'
+    }
+
     const first = form.firstName.trim()
     const last = form.lastName.trim()
     const full = [first, last].filter(Boolean).join(' ')
     return full.length > 0 ? full : 'Player Name'
-  }, [form.firstName, form.lastName])
+  }, [form.cardType, form.firstName, form.lastName, form.title])
 
   // Use S3 URL if uploaded, otherwise local blob URL
   const cropperImageUrl = photo?.localUrl ?? (uploadedPhoto ? media(uploadedPhoto.publicUrl) : null)
+
+  const buildCardForRender = useCallback(
+    (timestamp: string): Card | null => {
+      if (!form.cardType || !form.tournamentId) return null
+
+      return {
+        id: cardId ?? 'preview',
+        tournamentId: form.tournamentId,
+        cardType: form.cardType as CardType,
+        status: savedCard?.status ?? 'draft',
+        createdAt: savedCard?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+        photographer: toOptional(form.photographer),
+        photo: normalizedCrop ? { crop: normalizedCrop } : undefined,
+        firstName: toOptional(form.firstName),
+        lastName: toOptional(form.lastName),
+        position: toOptional(form.position),
+        teamId: toOptional(form.teamId),
+        teamName: selectedTeam?.name,
+        jerseyNumber: toOptional(form.jerseyNumber),
+        title: toOptional(form.title),
+        caption: toOptional(form.caption),
+      }
+    },
+    [
+      cardId,
+      form.caption,
+      form.cardType,
+      form.firstName,
+      form.jerseyNumber,
+      form.lastName,
+      form.photographer,
+      form.position,
+      form.teamId,
+      form.title,
+      form.tournamentId,
+      normalizedCrop,
+      savedCard?.createdAt,
+      savedCard?.status,
+      selectedTeam,
+    ]
+  )
+
+  useEffect(() => {
+    if (!tournamentConfig || !cropperImageUrl || !normalizedCrop || !form.cardType) {
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      setPreviewError(null)
+      return
+    }
+
+    let cancelled = false
+    const timeout = setTimeout(async () => {
+      try {
+        const timestamp = new Date().toISOString()
+        const card = buildCardForRender(timestamp)
+        if (!card) return
+        const blob = await renderCard({
+          card,
+          config: tournamentConfig,
+          imageUrl: cropperImageUrl,
+          resolveAssetUrl: assetUrlForKey,
+          templateId: form.templateId,
+        })
+        if (cancelled) return
+        const url = URL.createObjectURL(blob)
+        setPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return url
+        })
+        setPreviewError(null)
+      } catch {
+        if (!cancelled) {
+          setPreviewError('Preview failed to render')
+        }
+      }
+    }, 500)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [buildCardForRender, cropperImageUrl, form.cardType, form.templateId, normalizedCrop, tournamentConfig])
 
   return (
     <div className="app-shell min-h-screen">
@@ -745,350 +1156,557 @@ function App() {
           </div>
         </header>
 
-        <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr]">
+        {!form.tournamentId ? (
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">Card Details</h2>
+                <h2 className="text-lg font-semibold text-white">Select a tournament</h2>
                 <p className="text-sm text-slate-400">
-                  Draft ID: {cardId ?? 'Auto-created on submit'}
+                  Choose a tournament to load teams, positions, and branding.
                 </p>
-                <p className="text-xs text-slate-500">Fields marked * are required.</p>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-400">
-                <button
-                  type="button"
-                  onClick={() => helloQuery.refetch()}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                >
-                  Ping API
-                </button>
-                <span>
-                  {helloQuery.data ? 'Connected' : 'Idle'}
-                </span>
-              </div>
+              <span className="text-xs text-slate-400">
+                {tournamentsQuery.isFetching ? 'Loading…' : `${tournamentsQuery.data.length} available`}
+              </span>
             </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Card Type
+            <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-end">
+              <label className="flex-1 text-xs uppercase tracking-wide text-slate-400">
+                Tournament
                 <select
-                  value={form.cardType}
-                  onChange={handleFieldChange('cardType')}
+                  value={selectedTournamentId}
+                  onChange={(event) => setSelectedTournamentId(event.target.value)}
                   className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
                 >
-                  <option value="">Select type</option>
-                  <option value="player">Player</option>
-                  <option value="staff">Staff</option>
-                  <option value="media">Media</option>
-                  <option value="official">Official</option>
+                  <option value="">Select tournament</option>
+                  {tournamentsQuery.data.map((tournament) => (
+                    <option key={tournament.id} value={tournament.id}>
+                      {tournament.name} {tournament.year}
+                    </option>
+                  ))}
                 </select>
               </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Team <span className="text-rose-400">*</span>
-                <input
-                  value={form.team}
-                  onChange={handleFieldChange('team')}
-                  className={inputClass(hasEdited && Boolean(validationErrors.team))}
-                  placeholder="Bay Area Breakers"
-                />
-                {hasEdited && validationErrors.team ? (
-                  <span className="mt-1 block text-[11px] text-rose-300">
-                    {validationErrors.team}
-                  </span>
-                ) : null}
-              </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Position <span className="text-rose-400">*</span>
-                <input
-                  value={form.position}
-                  onChange={handleFieldChange('position')}
-                  className={inputClass(hasEdited && Boolean(validationErrors.position))}
-                  placeholder="Keeper"
-                />
-                {hasEdited && validationErrors.position ? (
-                  <span className="mt-1 block text-[11px] text-rose-300">
-                    {validationErrors.position}
-                  </span>
-                ) : null}
-              </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Jersey Number
-                <input
-                  value={form.jerseyNumber}
-                  onChange={handleFieldChange('jerseyNumber')}
-                  maxLength={MAX_JERSEY_LENGTH}
-                  inputMode="numeric"
-                  pattern="\\d*"
-                  className={inputClass(hasEdited && Boolean(validationErrors.jerseyNumber))}
-                  placeholder="15"
-                />
-                {hasEdited && validationErrors.jerseyNumber ? (
-                  <span className="mt-1 block text-[11px] text-rose-300">
-                    {validationErrors.jerseyNumber}
-                  </span>
-                ) : (
-                  <span className="mt-1 block text-[11px] text-slate-500">
-                    Numbers only, up to 3 digits.
-                  </span>
-                )}
-              </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                First Name <span className="text-rose-400">*</span>
-                <input
-                  value={form.firstName}
-                  onChange={handleFieldChange('firstName')}
-                  maxLength={MAX_NAME_LENGTH}
-                  className={inputClass(hasEdited && Boolean(validationErrors.firstName))}
-                  placeholder="Brandon"
-                />
-                {hasEdited && validationErrors.firstName ? (
-                  <span className="mt-1 block text-[11px] text-rose-300">
-                    {validationErrors.firstName}
-                  </span>
-                ) : null}
-              </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Last Name <span className="text-rose-400">*</span>
-                <input
-                  value={form.lastName}
-                  onChange={handleFieldChange('lastName')}
-                  maxLength={MAX_NAME_LENGTH}
-                  className={inputClass(hasEdited && Boolean(validationErrors.lastName))}
-                  placeholder="Williams"
-                />
-                {hasEdited && validationErrors.lastName ? (
-                  <span className="mt-1 block text-[11px] text-rose-300">
-                    {validationErrors.lastName}
-                  </span>
-                ) : null}
-              </label>
-              <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
-                Photo Credit
-                <input
-                  value={form.photographer}
-                  onChange={handleFieldChange('photographer')}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
-                  placeholder="Paul Schiopu"
-                />
-              </label>
+              <button
+                type="button"
+                onClick={handleTournamentContinue}
+                disabled={!selectedTournamentId}
+                className="rounded-full bg-emerald-500 px-6 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Continue →
+              </button>
             </div>
-
-            <div className="mt-6">
-              <label className="text-xs uppercase tracking-wide text-slate-400">
-                Player Photo <span className="text-rose-400">*</span>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-xs text-white transition hover:border-white/40">
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="sr-only"
-                      onChange={handleFileChange}
-                    />
-                    Upload
-                  </label>
-                  <span className="text-xs text-slate-400">
-                    {photo ? photo.file.name : 'No file selected'}
-                  </span>
-                  {uploadedPhoto && (
-                    <span className="text-xs text-emerald-400">Uploaded</span>
-                  )}
-                </div>
-                {photo && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    {photo.width} x {photo.height} px
+            <p className="mt-3 text-xs text-slate-500">
+              Admins can publish new tournaments from the admin panel.
+            </p>
+          </section>
+        ) : (
+          <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr]">
+            <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Card Details</h2>
+                  <p className="text-sm text-slate-400">
+                    Draft ID: {cardId ?? 'Auto-created on submit'}
                   </p>
-                )}
-                {photoError ? (
-                  <p className="mt-1 text-xs text-rose-300">{photoError}</p>
-                ) : hasEdited && validationErrors.photo ? (
-                  <p className="mt-1 text-xs text-rose-300">{validationErrors.photo}</p>
-                ) : null}
-              </label>
-            </div>
+                  <p className="text-xs text-slate-500">Fields marked * are required.</p>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-400">
+                  <button
+                    type="button"
+                    onClick={() => helloQuery.refetch()}
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                  >
+                    Ping API
+                  </button>
+                  <span>{helloQuery.data ? 'Connected' : 'Idle'}</span>
+                </div>
+              </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-4">
-              <button
-                type="button"
-                onClick={handleSaveDraft}
-                disabled={saveMutation.isPending}
-                className="rounded-full bg-white px-5 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-xs text-slate-300">
+                <div>
+                  <span className="uppercase tracking-[0.2em] text-slate-500">Tournament</span>
+                  <div className="mt-1 text-sm text-white">
+                    {tournamentConfig?.name ?? form.tournamentId}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTournamentReset}
+                  className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-white transition hover:border-white/40"
+                >
+                  Change
+                </button>
+              </div>
+              {!tournamentConfig ? (
+                <p className="mt-2 text-xs text-rose-300">
+                  Tournament config failed to load. Refresh or reselect the tournament.
+                </p>
+              ) : null}
+
+              <form
+                className="mt-6 grid gap-4 sm:grid-cols-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setHasEdited(true)
+                  if (canSubmit) submitMutation.mutate()
+                }}
               >
-                {saveButtonLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => submitMutation.mutate()}
-                disabled={!canSubmit}
-                className="rounded-full bg-emerald-500 px-5 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {submitButtonLabel}
-              </button>
-              <span className="text-xs text-slate-500">
-                Submit saves a draft automatically.
-              </span>
-              <div className="flex flex-wrap items-center gap-3 text-xs">
-                <span className={statusToneClass}>{statusIndicator.message}</span>
-                {uploadProgress ? (
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-1 w-24 overflow-hidden rounded-full bg-white/10"
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={uploadProgress.percent}
-                    >
+                <label className="text-xs uppercase tracking-wide text-slate-400">
+                  Card Type <span className="text-rose-400">*</span>
+                  <select
+                    value={form.cardType}
+                    onChange={handleCardTypeChange}
+                    disabled={!tournamentConfig}
+                    className={inputClass(hasEdited && Boolean(validationErrors.cardType))}
+                  >
+                    <option value="">Select type</option>
+                    {tournamentConfig?.cardTypes
+                      .filter((entry) => entry.enabled)
+                      .map((entry) => (
+                        <option key={entry.type} value={entry.type}>
+                          {entry.label}
+                        </option>
+                      ))}
+                  </select>
+                  {hasEdited && validationErrors.cardType ? (
+                    <span className="mt-1 block text-[11px] text-rose-300">
+                      {validationErrors.cardType}
+                    </span>
+                  ) : null}
+                </label>
+
+                <label className="text-xs uppercase tracking-wide text-slate-400">
+                  Card Style
+                  <select
+                    value={form.templateId}
+                    onChange={handleFieldChange('templateId')}
+                    className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
+                  >
+                    <option value="classic">Classic</option>
+                    <option value="noir">Noir</option>
+                  </select>
+                </label>
+
+                {form.cardType === 'rare' ? (
+                  <>
+                    <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
+                      Title <span className="text-rose-400">*</span>
+                      <input
+                        value={form.title}
+                        onChange={handleFieldChange('title')}
+                        maxLength={MAX_TITLE_LENGTH}
+                        className={inputClass(hasEdited && Boolean(validationErrors.title))}
+                        placeholder="Championship MVP"
+                      />
+                      {hasEdited && validationErrors.title ? (
+                        <span className="mt-1 block text-[11px] text-rose-300">
+                          {validationErrors.title}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
+                      Caption
+                      <textarea
+                        value={form.caption}
+                        onChange={handleFieldChange('caption')}
+                        maxLength={MAX_CAPTION_LENGTH}
+                        rows={2}
+                        className={inputClass(hasEdited && Boolean(validationErrors.caption))}
+                        placeholder="Awarded to the tournament MVP"
+                      />
+                      {hasEdited && validationErrors.caption ? (
+                        <span className="mt-1 block text-[11px] text-rose-300">
+                          {validationErrors.caption}
+                        </span>
+                      ) : null}
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    {cardTypeConfig?.showTeamField ? (
+                      <label className="text-xs uppercase tracking-wide text-slate-400">
+                        Team <span className="text-rose-400">*</span>
+                        <select
+                          value={form.teamId}
+                          onChange={handleFieldChange('teamId')}
+                          className={inputClass(hasEdited && Boolean(validationErrors.teamId))}
+                        >
+                          <option value="">Select team</option>
+                          {tournamentConfig?.teams.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          ))}
+                        </select>
+                        {hasEdited && validationErrors.teamId ? (
+                          <span className="mt-1 block text-[11px] text-rose-300">
+                            {validationErrors.teamId}
+                          </span>
+                        ) : null}
+                        {selectedTeam?.logoKey ? (
+                          <img
+                            src={assetUrlForKey(selectedTeam.logoKey)}
+                            alt={`${selectedTeam.name} logo`}
+                            className="mt-2 h-10 w-10 rounded-lg border border-white/10 object-contain"
+                          />
+                        ) : null}
+                      </label>
+                    ) : null}
+
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
+                      Position <span className="text-rose-400">*</span>
+                      {cardTypeConfig?.positions && cardTypeConfig.positions.length > 0 ? (
+                        <select
+                          value={form.position}
+                          onChange={handleFieldChange('position')}
+                          className={inputClass(hasEdited && Boolean(validationErrors.position))}
+                        >
+                          <option value="">Select position</option>
+                          {cardTypeConfig.positions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={form.position}
+                          onChange={handleFieldChange('position')}
+                          maxLength={MAX_POSITION_LENGTH}
+                          className={inputClass(hasEdited && Boolean(validationErrors.position))}
+                          placeholder="Keeper"
+                        />
+                      )}
+                      {hasEdited && validationErrors.position ? (
+                        <span className="mt-1 block text-[11px] text-rose-300">
+                          {validationErrors.position}
+                        </span>
+                      ) : null}
+                    </label>
+
+                    {cardTypeConfig?.showJerseyNumber ? (
+                      <label className="text-xs uppercase tracking-wide text-slate-400">
+                        Jersey Number
+                        <input
+                          value={form.jerseyNumber}
+                          onChange={handleFieldChange('jerseyNumber')}
+                          maxLength={MAX_JERSEY_LENGTH}
+                          inputMode="numeric"
+                          pattern="\\d*"
+                          className={inputClass(hasEdited && Boolean(validationErrors.jerseyNumber))}
+                          placeholder="15"
+                        />
+                        {hasEdited && validationErrors.jerseyNumber ? (
+                          <span className="mt-1 block text-[11px] text-rose-300">
+                            {validationErrors.jerseyNumber}
+                          </span>
+                        ) : (
+                          <span className="mt-1 block text-[11px] text-slate-500">
+                            Numbers only, up to 2 digits.
+                          </span>
+                        )}
+                      </label>
+                    ) : null}
+
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
+                      First Name <span className="text-rose-400">*</span>
+                      <input
+                        value={form.firstName}
+                        onChange={handleFieldChange('firstName')}
+                        maxLength={MAX_NAME_LENGTH}
+                        className={inputClass(hasEdited && Boolean(validationErrors.firstName))}
+                        placeholder="Brandon"
+                      />
+                      {hasEdited && validationErrors.firstName ? (
+                        <span className="mt-1 block text-[11px] text-rose-300">
+                          {validationErrors.firstName}
+                        </span>
+                      ) : null}
+                    </label>
+
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
+                      Last Name <span className="text-rose-400">*</span>
+                      <input
+                        value={form.lastName}
+                        onChange={handleFieldChange('lastName')}
+                        maxLength={MAX_NAME_LENGTH}
+                        className={inputClass(hasEdited && Boolean(validationErrors.lastName))}
+                        placeholder="Williams"
+                      />
+                      {hasEdited && validationErrors.lastName ? (
+                        <span className="mt-1 block text-[11px] text-rose-300">
+                          {validationErrors.lastName}
+                        </span>
+                      ) : null}
+                    </label>
+                  </>
+                )}
+
+                <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
+                  Photo Credit
+                  <input
+                    value={form.photographer}
+                    onChange={handleFieldChange('photographer')}
+                    maxLength={MAX_PHOTOGRAPHER_LENGTH}
+                    className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
+                    placeholder="Paul Schiopu"
+                  />
+                </label>
+              </form>
+
+              <div className="mt-6">
+                <label className="text-xs uppercase tracking-wide text-slate-400">
+                  Card Photo <span className="text-rose-400">*</span>
+                </label>
+                <label
+                  className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed px-6 py-8 text-center text-sm text-slate-300 transition ${
+                    isDragging ? 'border-emerald-400/70 bg-emerald-500/10' : 'border-white/15 bg-slate-950/40'
+                  }`}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                >
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={handleFileChange}
+                  />
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
+                    Drop photo here
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    or click to upload (JPG, PNG, WebP · max 15MB)
+                  </p>
+                  {photo ? (
+                    <p className="text-xs text-emerald-300">
+                      {photo.file.name} · {photo.width} x {photo.height} px
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500">Auto-resized to {MAX_IMAGE_DIMENSION}px max</p>
+                  )}
+                </label>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                  <span>{photo ? photo.file.name : 'No file selected'}</span>
+                  {uploadedPhoto && <span className="text-emerald-400">Uploaded</span>}
+                </div>
+                {photoError ? (
+                  <p className="mt-2 text-xs text-rose-300">{photoError}</p>
+                ) : hasEdited && validationErrors.photo ? (
+                  <p className="mt-2 text-xs text-rose-300">{validationErrors.photo}</p>
+                ) : null}
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  onClick={handleSaveDraft}
+                  disabled={saveMutation.isPending}
+                  className="rounded-full bg-white px-5 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {saveButtonLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => submitMutation.mutate()}
+                  disabled={!canSubmit}
+                  className="rounded-full bg-emerald-500 px-5 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {submitButtonLabel}
+                </button>
+                <span className="text-xs text-slate-500">
+                  Submit saves a draft automatically.
+                </span>
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className={statusToneClass}>{statusIndicator.message}</span>
+                  {uploadProgress ? (
+                    <div className="flex items-center gap-2">
                       <div
-                        className="h-full rounded-full bg-emerald-400 transition-all"
-                        style={{ width: `${uploadProgress.percent}%` }}
+                        className="h-1 w-24 overflow-hidden rounded-full bg-white/10"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={uploadProgress.percent}
+                      >
+                        <div
+                          className="h-full rounded-full bg-emerald-400 transition-all"
+                          style={{ width: `${uploadProgress.percent}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        {uploadProgress.kind === 'original'
+                          ? 'Photo'
+                          : uploadProgress.kind === 'crop'
+                            ? 'Crop'
+                            : 'Render'}{' '}
+                        {uploadProgress.percent}%
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-6">
+              <div
+                className={`rounded-3xl border border-emerald-500/30 bg-emerald-950/20 p-6 backdrop-blur ${
+                  submitStatus === 'done' ? 'celebrate' : ''
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm uppercase tracking-[0.2em] text-emerald-400">
+                    {renderedCardUrl ? 'Rendered Card' : 'Live Preview'}
+                  </h3>
+                  {previewUrl && !renderedCardUrl ? (
+                    <span className="text-xs text-emerald-200/70">Updating preview</span>
+                  ) : null}
+                </div>
+                {renderedCardUrl ? (
+                  <>
+                    <div className="mt-4">
+                      <img
+                        src={renderedCardUrl}
+                        alt="Rendered trading card"
+                        className="w-full rounded-2xl shadow-lg"
                       />
                     </div>
-                    <span className="text-[11px] text-slate-400">
-                      {uploadProgress.kind === 'original' ? 'Photo' : 'Render'} {uploadProgress.percent}%
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-        </div>
-      </section>
-
-      <section className="space-y-6">
-        <div className="rounded-3xl border border-emerald-500/30 bg-emerald-950/20 p-6 backdrop-blur">
-          <h3 className="text-sm uppercase tracking-[0.2em] text-emerald-400">
-            Rendered Card
-          </h3>
-          {renderedCardUrl ? (
-            <>
-              <div className="mt-4">
-                <img
-                  src={renderedCardUrl}
-                  alt="Rendered trading card"
-                  className="w-full rounded-2xl shadow-lg"
-                />
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <a
-                  href={renderedCardUrl}
-                  download="trading-card.png"
-                  className="rounded-full border border-emerald-500/30 px-4 py-2 text-xs text-emerald-400 transition hover:border-emerald-500/60 hover:bg-emerald-500/10"
-                >
-                  Download PNG
-                </a>
-                <span className="text-xs text-slate-400">
-                  Status: {savedCard?.status ?? 'unknown'}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="mt-4">
-              <div className="flex aspect-[825/1125] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
-                {isRenderInProgress ? (
-                  <div className="flex flex-col items-center gap-3 text-emerald-200/70">
-                    <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
-                    <span className="text-[11px] uppercase tracking-[0.2em]">
-                      Building render
-                    </span>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <a
+                        href={renderedCardUrl}
+                        download="trading-card.png"
+                        className="rounded-full border border-emerald-500/30 px-4 py-2 text-xs text-emerald-400 transition hover:border-emerald-500/60 hover:bg-emerald-500/10"
+                      >
+                        Download PNG
+                      </a>
+                      <span className="text-xs text-slate-400">
+                        Status: {savedCard?.status ?? 'unknown'}
+                      </span>
+                    </div>
+                  </>
+                ) : previewUrl ? (
+                  <div className="mt-4">
+                    <img
+                      src={previewUrl}
+                      alt="Live preview trading card"
+                      className="w-full rounded-2xl shadow-lg"
+                    />
+                    <p className="mt-2 text-xs text-slate-400">
+                      Preview updates as you edit. Submit to generate the final PNG.
+                    </p>
                   </div>
                 ) : (
-                  'Submit your card to generate the final render.'
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <div>
-            <h2 className="text-lg font-semibold text-white">Live Crop</h2>
-                <p className="text-sm text-slate-400">
-                  Drag the image to frame it. Scroll or pinch to zoom.
-                </p>
-              </div>
-
-              <div className="mt-5">
-                {/* Aspect ratio matches CARD_ASPECT (825:1125) */}
-                <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/60 shadow-[0_20px_60px_rgba(3,7,18,0.6)]">
-                  {cropperImageUrl ? (
-                    <Cropper
-                      image={cropperImageUrl}
-                      crop={crop}
-                      zoom={zoom}
-                      rotation={0}
-                      aspect={CARD_ASPECT}
-                      onCropChange={setCrop}
-                      onZoomChange={setZoom}
-                      onCropComplete={handleCropComplete}
-                      onMediaLoaded={handleMediaLoaded}
-                      showGrid={false}
-                      classes={{
-                        containerClassName: 'cropper-container',
-                        cropAreaClassName: 'cropper-area',
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">
-                      Upload a photo to start cropping
+                  <div className="mt-4">
+                    <div className="flex aspect-[825/1125] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
+                      {isRenderInProgress ? (
+                        <div className="flex flex-col items-center gap-3 text-emerald-200/70">
+                          <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
+                          <span className="text-[11px] uppercase tracking-[0.2em]">
+                            Building render
+                          </span>
+                        </div>
+                      ) : previewError ? (
+                        previewError
+                      ) : (
+                        'Upload a photo and crop to see the live preview.'
+                      )}
                     </div>
-                  )}
-                </div>
-                {hasEdited && validationErrors.crop ? (
-                  <p className="mt-2 text-xs text-rose-300">{validationErrors.crop}</p>
-                ) : null}
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleZoom(0.2)}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                >
-                  Zoom In
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleZoom(-0.2)}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                >
-                  Zoom Out
-                </button>
-                {/* Rotation disabled for v1 - math needs fixing for 90°/270° */}
-                <button
-                  type="button"
-                  onClick={handleResetCrop}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-              <h3 className="text-sm uppercase tracking-[0.2em] text-slate-400">
-                Preview Meta
-              </h3>
-              <div className="mt-4 space-y-3">
-                <div className="font-display text-2xl text-white">
-                  {displayName}
-                </div>
-                <div className="text-sm text-slate-300">
-                  {form.position || 'Position'} / {form.team || 'Team'}
-                </div>
-                <div className="text-xs text-slate-400">
-                  Crop: {normalizedCrop ? `${normalizedCrop.w.toFixed(2)} x ${normalizedCrop.h.toFixed(2)}` : '-'}
-                </div>
-                {uploadedPhoto && (
-                  <div className="text-xs text-slate-400">
-                    Photo: <span className="text-emerald-400">{uploadedPhoto.key}</span>
                   </div>
                 )}
-            {savedCard ? (
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-xs text-slate-300">
-                Saved as <span className="text-white">{savedCard.id}</span>
               </div>
-            ) : null}
+
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Live Crop</h2>
+                  <p className="text-sm text-slate-400">
+                    Drag the image to frame it. Scroll or pinch to zoom.
+                  </p>
+                </div>
+
+                <div className="mt-5">
+                  <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/60 shadow-[0_20px_60px_rgba(3,7,18,0.6)]">
+                    {cropperImageUrl ? (
+                      <Cropper
+                        image={cropperImageUrl}
+                        crop={crop}
+                        zoom={zoom}
+                        rotation={0}
+                        aspect={CARD_ASPECT}
+                        onCropChange={setCrop}
+                        onZoomChange={setZoom}
+                        onCropComplete={handleCropComplete}
+                        onMediaLoaded={handleMediaLoaded}
+                        showGrid={false}
+                        classes={{
+                          containerClassName: 'cropper-container',
+                          cropAreaClassName: 'cropper-area',
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">
+                        Upload a photo to start cropping
+                      </div>
+                    )}
+                  </div>
+                  {hasEdited && validationErrors.crop ? (
+                    <p className="mt-2 text-xs text-rose-300">{validationErrors.crop}</p>
+                  ) : null}
+                </div>
+
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleZoom(0.2)}
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                  >
+                    Zoom In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleZoom(-0.2)}
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                  >
+                    Zoom Out
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetCrop}
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+                <h3 className="text-sm uppercase tracking-[0.2em] text-slate-400">
+                  Preview Meta
+                </h3>
+                <div className="mt-4 space-y-3">
+                  <div className="font-display text-2xl text-white">{displayName}</div>
+                  <div className="text-sm text-slate-300">
+                    {form.cardType === 'rare'
+                      ? form.caption || 'Caption'
+                      : [form.position || 'Position', selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : '')]
+                          .filter(Boolean)
+                          .join(' / ')}
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Crop: {normalizedCrop ? `${normalizedCrop.w.toFixed(2)} x ${normalizedCrop.h.toFixed(2)}` : '-'}
+                  </div>
+                  {uploadedPhoto && (
+                    <div className="text-xs text-slate-400">
+                      Photo: <span className="text-emerald-400">{uploadedPhoto.key}</span>
+                    </div>
+                  )}
+                  {savedCard ? (
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-xs text-slate-300">
+                      Saved as <span className="text-white">{savedCard.id}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </section>
           </div>
-        </div>
-      </section>
-        </div>
+        )}
       </div>
     </div>
   )

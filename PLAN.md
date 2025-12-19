@@ -110,6 +110,11 @@ Added per-package `type-check` scripts so Turbo runs TypeScript checks.
 
 Submit now requires required fields, a photo, and a valid crop; inline validation added.
 
+### 9. PATCH UpdateCommand ExpressionAttributeNames bug ✅ FIXED
+**File:** `server/src/index.ts`
+
+Fixed placeholder mapping so PATCH no longer 500s with invalid ExpressionAttributeNames.
+
 ---
 
 ## Next Steps (Phase 4+)
@@ -136,8 +141,8 @@ Submit now requires required fields, a photo, and a valid crop; inline validatio
 - [x] Handle long names - Shrink-to-fit text sizing in render
 
 ### UX Upgrades
-- [ ] Photo upload prominence - Larger drop zone, drag-and-drop support, clearer empty state
-- [ ] Live card preview - Show real-time preview of final card layout (not just crop), reuse `renderCard` logic
+- [x] Photo upload prominence - Larger drop zone, drag-and-drop support, clearer empty state
+- [x] Live card preview - Show real-time preview of final card layout (not just crop), reuse `renderCard` logic
 - [x] Button state feedback - Show "Saving..." / "Creating..." on buttons during mutations, not just status text
 - [x] Submit enablement hint - Helper text when required fields are missing
 - [x] Status consolidation - Single status indicator instead of multiple inline messages
@@ -147,25 +152,26 @@ Submit now requires required fields, a photo, and a valid crop; inline validatio
 - [x] Submit flow clarity - Auto-save draft on submit
 - [x] Page title - Change from "BHVR" to "Trading Card Studio"
 - [x] Upload progress - Show progress bar during photo upload (especially for large files)
-- [ ] Success celebration - Brief animation or visual feedback when card is submitted successfully
-- [ ] Keyboard navigation - Tab order, Enter to submit form sections
+- [x] Success celebration - Brief animation or visual feedback when card is submitted successfully
+- [x] Keyboard navigation - Tab order, Enter to submit form sections
 
 ### Admin/Management
-- [ ] Admin list endpoint - Query cards by status using GSI (`byStatus`)
-- [ ] Card gallery - View all submitted cards
-- [ ] Status management - Mark cards as `rendered`, delete drafts
+- [x] Admin list endpoint - Query cards by status using GSI (`byStatus`)
+- [x] Card gallery - View all submitted cards
+- [x] Status management - Mark cards as `rendered`, delete drafts
 
 ### Polish
-- [ ] Card templates - Different designs/themes
+- [x] Card templates - Different designs/themes
 - [x] Font loading - Custom fonts for card text (Sora/Fraunces)
-- [ ] Image optimization - Resize before upload, WebP support
-- [ ] Mobile UX - Touch-friendly cropping
+- [x] Image optimization - Resize before upload, WebP support
+- [x] Mobile UX - Touch-friendly cropping
 
 ### Production
-- [ ] Auth - Protect card creation/submission (or admin routes only)
-- [ ] Rate limiting - Prevent abuse
-- [ ] Monitoring - CloudWatch logs, error tracking
-- [ ] CI/CD - Automated deployments
+- [ ] Auth - Pending new security approach (WRITE_SECRET removed)
+- [x] Rate limiting - Prevent abuse
+- [x] Cost monitoring - handled manually via account-level budgets (no in-app kill switch)
+- [x] Monitoring - Sentry client error tracking (logs via Sentry) and CloudWatch logs
+- [x] CI/CD - GitHub Actions deploy on push to main (OIDC role + SST stage vars required)
 
 ## Key Decisions & Considerations
 - **Frontend:** Vite + React + Tailwind + TanStack Router + TanStack Query.
@@ -299,8 +305,8 @@ Submit now requires required fields, a photo, and a valid crop; inline validatio
    - [x] Clamp crop values on server
 
 4. **Admin/review screen (optional but valuable)**
-   - [ ] List `submitted` cards via GSI (`byStatus`)
-   - [ ] Display final render + metadata for quick approval
+   - [x] List `submitted` cards via GSI (`byStatus`)
+   - [x] Display final render + metadata for quick approval
 
 ---
 
@@ -320,10 +326,637 @@ Submit now requires required fields, a photo, and a valid crop; inline validatio
 
 ## Open Questions
 - Retention period for `renders/`? (`uploads/` expires after 14 days)
-- Store cropped derivative, or only original + crop metadata? (Currently: original only)
-- Any admin interface required in v1?
-- Custom fonts for card rendering?
-- PATCH semantics - Current impl is "merge and replace" (Get → merge → Put). Cannot unset fields, no optimistic concurrency. Accept for v1 or switch to `UpdateCommand` with explicit SET/REMOVE?
 
 ## Answered Questions
 - **Rotation support** - Disabled for v1. The rotation math needs proper safe-area canvas implementation which is complex. Will revisit in a future version if needed.
+- **Admin interface** - Yes, needed for tournament organizers to configure tournaments, teams, and card types.
+- **Custom fonts** - Already implemented (Sora + Fraunces).
+- **Store cropped derivative?** - Optional but recommended for admin review/proofing. Add crop upload step.
+- **PATCH semantics** - Move to `UpdateCommand` with update expressions, or add optimistic concurrency (`version` field).
+
+---
+
+# Pre-Phase 5: Critical Fixes Before Scaling
+
+Before adding tournament support and 6 card types, fix these "don't regret later" items. With admin portal + more card types + CSV imports, bad data paths multiply.
+
+## 1. Server-Side Validation (Currently Too Trusting)
+
+The client validates, but the server must be the gatekeeper. Add:
+
+| Field | Validation |
+|-------|------------|
+| `firstName`, `lastName` | max 24 chars, non-empty for submit |
+| `title` (rare) | max 48 chars, non-empty for submit |
+| `caption` (rare) | max 120 chars |
+| `photographer` | max 48 chars |
+| `jerseyNumber` | regex `^[0-9]{1,2}$` (1-2 digits only) |
+| `teamName` | max 64 chars |
+| `position` | max 32 chars |
+| `crop` | already validated (x, y, w, h in 0-1 range) ✅ |
+
+**Why:** With admin portal, CSV imports, and tournament configs, you'll accept more "foreign" input. Server must reject invalid data.
+
+## 2. PATCH Endpoint: Fix "Last Write Wins"
+
+Current: `Get → merge → Put` overwrites concurrent edits.
+
+**Fix options (pick one):**
+- **Option A:** Move to `UpdateCommand` with update expressions (granular field updates)
+- **Option B:** Add `version` field for optimistic concurrency (reject if version mismatch)
+
+**Recommendation:** Option A is cleaner. Use `SET` for fields, `REMOVE` for nulls.
+
+## 3. Auth / Abuse Controls (Currently Wide Open)
+
+Current state: `POST /uploads/presign` + open CORS + no auth = anyone can use your bucket as free upload relay.
+
+**MVP fixes (implement at least one now):**
+
+| Option | Complexity | Protection |
+|--------|------------|------------|
+| Stage secret header | Low | `Authorization: Bearer <secret>` on write endpoints *(removed)* |
+| IP rate limiting | Low | In-memory limiter (crude but filters bursts) |
+| CloudFront/WAF | Medium | Proper rate limiting + geo blocking |
+
+**Recommendation:** Replace with the new auth plan (WRITE_SECRET removed).
+
+## 4. Crop Derivative Upload (Optional but Recommended)
+
+Current: Upload original + store crop metadata + render final. The cropped original is never persisted.
+
+**Benefit of storing crop derivative:**
+- Fast admin previews (no re-cropping needed)
+- Proofing workflow (review cropped image before final render)
+- Audit trail (what the user actually saw)
+
+**Implementation:** Add optional step after crop to upload `uploads/crop/<cardId>/<uploadId>.png`.
+
+---
+
+# Phase 5: Tournament Support & Multi-Card-Type System
+
+## Overview
+
+Transform the app into a tournament-aware platform:
+
+1. User selects a **Tournament** first (dropdown)
+2. Tournament selection drives:
+   - Available card types
+   - Team list + team logos
+   - Position dropdowns per card type
+   - Branding (tournament/org logos, colors)
+3. Tournament organizers configure tournaments via **Admin Portal**
+4. Seed **USQC 2025** to fully replicate old app behavior
+
+## Goals
+
+- Support multiple tournaments (starting with USQC 2025)
+- Support all 6 card types:
+  - Player
+  - Team Staff
+  - Media
+  - Officials
+  - Tournament Staff
+  - Rare
+- Per-card-type schemas (Rare uses title/caption instead of name)
+- Team dropdown driven by config + show logos
+- Position dropdowns driven by config + differ per card type
+- Admin portal MVP for organizers:
+  - Create/edit tournament
+  - Bulk import teams (CSV)
+  - Upload logos
+  - Configure card types + positions
+- Keep cards dynamic + queryable in DynamoDB
+
+---
+
+## Data Model
+
+### Shared Types (Discriminated Union)
+
+The key design decision: use a **discriminated union** by `cardType`. Drafts allow missing fields; `submit` validates completeness per type.
+
+```typescript
+// shared/src/types/index.ts
+
+export type CardType =
+  | "player"
+  | "team-staff"
+  | "media"
+  | "official"
+  | "tournament-staff"
+  | "rare";
+
+export type CardStatus = "draft" | "submitted" | "rendered";
+
+export type CropRect = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotateDeg: 0 | 90 | 180 | 270;
+};
+
+export type CardPhoto = {
+  originalKey?: string;
+  width?: number;
+  height?: number;
+  crop?: CropRect;
+  cropKey?: string;     // optional "cropped original"
+};
+
+// Base fields all cards share
+export type CardBase = {
+  id: string;
+  tournamentId: string;
+  cardType: CardType;
+  status: CardStatus;
+  photographer?: string;
+  photo?: CardPhoto;
+  renderKey?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Standard card (Player, Team Staff, Media, Official, Tournament Staff)
+export type StandardCard = CardBase & {
+  cardType: Exclude<CardType, "rare">;
+  firstName?: string;
+  lastName?: string;
+  teamId?: string;        // reference to team in tournament config
+  teamName?: string;      // denormalized for printing
+  position?: string;
+  jerseyNumber?: string;  // only meaningful for player
+};
+
+// Rare card (special layout)
+export type RareCard = CardBase & {
+  cardType: "rare";
+  title?: string;
+  caption?: string;
+};
+
+export type Card = StandardCard | RareCard;
+```
+
+### Card Type Field Rules (USQC 2025)
+
+| Card Type | Team | Position | Jersey | Name Fields | Special Fields |
+|-----------|------|----------|--------|-------------|----------------|
+| Player | ✅ dropdown | ✅ dropdown | ✅ | firstName, lastName | - |
+| Team Staff | ✅ dropdown | ✅ dropdown | ❌ | firstName, lastName | - |
+| Media | ❌ | ✅ dropdown | ❌ | firstName, lastName | - |
+| Official | ❌ | ✅ dropdown | ❌ | firstName, lastName | - |
+| Tournament Staff | ❌ | ✅ dropdown | ❌ | firstName, lastName | - |
+| Rare | ❌ | ❌ | ❌ | ❌ | title, caption |
+
+### DynamoDB Updates
+
+Add fields to Cards table:
+- `tournamentId` (string, required)
+- `cardType` (string, required)
+
+Add GSI for tournament queries:
+- **GSI:** `byTournamentStatus`
+  - PK: `tournamentId`
+  - SK: `status#createdAt`
+
+(Keep existing `byStatus` GSI for global admin views.)
+
+### Tournament Configuration (S3 JSON)
+
+Store tournament "content packs" in S3 with **published vs draft** structure for future admin workflow:
+
+```
+config/
+  tournaments.json                         # List: [{id, name, year, published}]
+  tournaments/
+    usqc-2025/
+      published/
+        config.json                        # Live config users see
+      draft/
+        config.json                        # Admin preview (optional)
+      logos/
+        tournament.png                     # Tournament logo
+        org.png                            # Org logo (USQ)
+      teams/
+        arizona-state.png                  # Team logos
+        boston-red-pandas.png
+        ...
+uploads/                                   # (existing)
+renders/                                   # (existing)
+```
+
+### TournamentConfig Type
+
+```typescript
+export type CardType = "player" | "team-staff" | "media" | "official" | "tournament-staff" | "rare";
+
+export interface TournamentConfig {
+  id: string;             // "usqc-2025"
+  name: string;           // "US Quadball Cup 2025"
+  year: number;
+  branding: {
+    tournamentLogoKey: string;
+    orgLogoKey?: string;
+    primaryColor?: string;
+  };
+  teams: Array<{
+    id: string;
+    name: string;
+    logoKey: string;
+  }>;
+  cardTypes: Array<{
+    type: CardType;
+    enabled: boolean;
+    label: string;
+    showTeamField: boolean;
+    showJerseyNumber: boolean;
+    positions?: string[];
+    logoOverrideKey?: string;  // e.g. org logo for officials/media
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## API Changes
+
+### Public Endpoints
+
+```
+GET  /api/tournaments              # List tournaments [{id, name, year}]
+GET  /api/tournaments/:id          # Get TournamentConfig (from S3)
+GET  /api/tournaments/:id/teams    # Optional: just teams (or embedded in config)
+```
+
+### Card Endpoints (Updated)
+
+```
+POST  /api/cards                   # Requires { tournamentId, cardType } at minimum
+GET   /api/cards/:id               # Returns card with tournament context
+PATCH /api/cards/:id               # Validates fields against cardType schema
+                                   # Disallow changing tournamentId/cardType after create
+POST  /api/cards/:id/submit        # Validates "complete enough" for cardType
+                                   # HEAD render in S3 before accepting renderKey
+```
+
+### Admin Endpoints (Currently Unauthenticated)
+
+Auth is pending the new security approach (WRITE_SECRET removed).
+
+```
+POST   /api/admin/tournaments                    # Create tournament
+PUT    /api/admin/tournaments/:id                # Update config
+POST   /api/admin/tournaments/:id/teams/import   # CSV upload
+POST   /api/admin/tournaments/:id/assets/presign # Logo upload presign
+POST   /api/admin/tournaments/:id/publish        # Publish draft → published
+```
+
+---
+
+## Submit Validation Rules (Per Card Type)
+
+| Card Type | Required Fields |
+|-----------|-----------------|
+| Player | firstName, lastName, teamId, position, photo.originalKey, photo.crop |
+| Team Staff | firstName, lastName, teamId, position, photo.originalKey, photo.crop |
+| Media | firstName, lastName, position, photo.originalKey, photo.crop |
+| Official | firstName, lastName, position, photo.originalKey, photo.crop |
+| Tournament Staff | firstName, lastName, position, photo.originalKey, photo.crop |
+| Rare | title, photo.originalKey, photo.crop |
+
+**All types:** `renderKey` must exist and match `renders/${cardId}/...png`
+
+---
+
+## Client UI Flow
+
+### 1. Tournament Selection (First Step)
+
+```
+┌─────────────────────────────────────────┐
+│  Select Tournament                       │
+│  ┌─────────────────────────────────┐    │
+│  │ US Quadball Cup 2025         ▼  │    │
+│  └─────────────────────────────────┘    │
+│                                          │
+│  [Continue →]                            │
+└─────────────────────────────────────────┘
+```
+
+On select: fetch config + cache in TanStack Query.
+
+### 2. Card Builder (Dynamic Form)
+
+- **Card type dropdown:** Filtered by `config.cardTypes.filter(t => t.enabled)`
+- **Team dropdown:** Only if `cardType.showTeamField`, options from `config.teams`
+- **Position dropdown:** Options from `cardType.positions`
+- **Jersey number:** Only if `cardType.showJerseyNumber`
+- **Rare card:** Shows `title` + `caption` fields instead of name/team/position
+
+### 3. Save Draft vs Submit
+
+- **Save Draft:** Allows partial fields (incremental saving)
+- **Submit:** Enforces required fields per card type
+
+---
+
+## Rendering Updates
+
+### Per-Card-Type Rendering
+
+```typescript
+async function renderCard(card: Card, config: TournamentConfig): Promise<Blob> {
+  switch (card.cardType) {
+    case "player":
+    case "team-staff":
+      return renderTeamCard(card, config);      // Shows team logo
+    case "media":
+    case "official":
+      return renderOrgCard(card, config);       // Shows org logo (USQ)
+    case "tournament-staff":
+      return renderTournamentCard(card, config); // Shows tournament logo
+    case "rare":
+      return renderRareCard(card, config);      // Different layout entirely
+  }
+}
+```
+
+### Logo Loading
+
+- Load logos from S3 via CloudFront (same-origin to avoid canvas taint)
+- Use `crossOrigin="anonymous"` on image elements
+- Cache loaded images in memory
+
+### Rare Card Layout
+
+```
+┌───────────────────────────────────────┐
+│ [USQC Logo]             "Rare Card"   │
+│                                        │
+│             [PHOTO]                    │
+│                                        │
+│      ══════════════════════════        │
+│         CHAMPIONSHIP MVP               │ ← Large centered title
+│      ══════════════════════════        │
+│    Awarded to the tournament MVP       │ ← Caption below
+│                                        │
+│ 📷 Photographer           ★ rare      │
+└───────────────────────────────────────┘
+```
+
+---
+
+## Implementation Phases (Recommended Order)
+
+The "least painful" path to a working upgrade:
+
+### Phase 5a: Card Type Union + Per-Type Submit Validation
+
+**Goal:** Support all 6 types with proper schemas. No tournament config yet.
+
+- [x] Add discriminated union card types in `shared/src/types/index.ts`
+- [x] Update server to accept `cardType` on create
+- [x] Add per-cardType submit validation rules
+- [x] Disallow changing `cardType` after creation
+- [x] Update client form to show different fields per card type
+- [x] Client validation matches server rules
+
+### Phase 5b: Introduce Tournament ID + Hard-Coded USQC 2025
+
+**Goal:** Add tournament concept with single hard-coded config.
+
+- [x] Add `tournamentId` field to Card schema
+- [x] Require `tournamentId` on card creation
+- [x] Hard-code USQC 2025 config in client (no S3 yet) *(partial team list; needs full data)*
+- [x] Tournament dropdown exists but only has one item
+- [x] Team dropdown populated from hard-coded config *(partial list pending full data)*
+- [x] Position dropdown populated from hard-coded config
+
+### Phase 5c: Move Config to S3 + Public Endpoints
+
+**Goal:** Organizers can change teams/positions/logos without redeploy.
+
+- [x] Define TournamentConfig type in `shared`
+- [x] Set up S3 config path conventions (`config/tournaments/...`)
+- [x] Implement `GET /api/tournaments` (list)
+- [x] Implement `GET /api/tournaments/:id` (fetch from S3)
+- [x] Seed USQC 2025 config JSON to S3
+- [x] Upload 66 team logos to S3
+- [x] Client fetches config from API instead of hard-coded
+- [x] Add GSI for tournament/status queries
+
+### Phase 5d: Multi-Card-Type Rendering
+
+**Goal:** All 6 card types render correctly with proper logos.
+
+- [x] Refactor `renderCard.ts` to handle all card types
+- [x] Implement team logo rendering (Player/Team Staff)
+- [x] Implement org logo rendering (Media/Official)
+- [x] Implement tournament logo rendering (Tournament Staff)
+- [x] Implement rare card layout (title/caption centered)
+- [x] Validate visual parity with old USQC 2025 app *(no longer required)*
+
+### Phase 5e: Admin Portal MVP
+
+**Goal:** Tournament organizers can configure without developer help.
+
+- [x] `/admin` route in client with shared-secret auth
+- [x] Tournament editor form (name, year, logo) *(JSON editor + logo uploader)*
+- [x] Card type enable/disable + position editing *(via JSON editor)*
+- [x] CSV team import (id, name, logo_url columns)
+- [x] Team logo upload (individual presigned URLs)
+- [x] Config preview before publish
+- [x] Export config as JSON backup
+
+### Phase 5f: Admin Bulk Operations
+
+**Goal:** Streamline admin workflows for bulk asset management.
+
+- [x] **Download All Cards (ZIP)** - Download all rendered cards from current filter as a zip file
+  - Uses JSZip to create zip client-side
+  - Fetches card images via presigned S3 URLs (avoids CORS)
+  - Files named `{name}-{cardId}.png`
+  - Zip named `cards-{status}-{date}.zip`
+- [x] **Upload Team Logos (ZIP)** - Bulk upload team logos via zip file
+  - `POST /admin/tournaments/:id/logos-zip`
+  - Accepts zip with `{team-id}.png` files at root
+  - Validates team IDs against tournament config
+  - Reports uploaded, skipped (invalid team), and missing logos
+- [x] **Tournament Bundle Export** - Export complete tournament as zip
+  - `GET /admin/tournaments/:id/bundle`
+  - Includes: `config.json`, `tournament-logo.png`, `org-logo.png`, `teams/*.png`
+  - Enables backup and transfer between environments
+- [x] **Tournament Bundle Import** - Import tournament from zip
+  - `POST /admin/tournaments/import-bundle`
+  - Creates/updates tournament from `config.json`
+  - Uploads all included assets to correct S3 paths
+  - Auto-updates tournament list
+- [x] **Presigned Download URLs** - Server endpoint for CORS-free downloads
+  - `GET /admin/cards/:id/download-url`
+  - Returns presigned S3 URL with `Content-Disposition: attachment`
+  - Enables client-side zip creation without CORS issues
+
+---
+
+## USQC 2025 Seed Data
+
+### Teams (66 total)
+
+Full list extracted from old app's `teams.js`:
+
+```json
+[
+  { "id": "arizona-state", "name": "Arizona State University", "logoKey": "teams/arizona-state.png" },
+  { "id": "atlantic-dragons", "name": "Atlantic Dragons Quadball", "logoKey": "teams/atlantic-dragons.png" },
+  { "id": "ball-state", "name": "Ball State Cardinals", "logoKey": "teams/ball-state.png" },
+  { "id": "bay-area-breakers", "name": "Bay Area Breakers", "logoKey": "teams/bay-area-breakers.png" },
+  { "id": "baylor", "name": "Baylor QC", "logoKey": "teams/baylor.png" },
+  ...
+]
+```
+
+### Card Types Configuration
+
+```json
+{
+  "cardTypes": [
+    {
+      "type": "player",
+      "enabled": true,
+      "label": "Player",
+      "showTeamField": true,
+      "showJerseyNumber": true,
+      "positions": ["Beater", "Chaser", "Keeper", "Seeker", "Utility"]
+    },
+    {
+      "type": "team-staff",
+      "enabled": true,
+      "label": "Team Staff",
+      "showTeamField": true,
+      "showJerseyNumber": false,
+      "positions": ["Captain", "Coach", "Manager", "Mascot", "Team Staff"]
+    },
+    {
+      "type": "media",
+      "enabled": true,
+      "label": "Media",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "logoOverrideKey": "logos/org.png",
+      "positions": ["Commentator", "Livestream", "Photographer", "Videographer", "Media"]
+    },
+    {
+      "type": "official",
+      "enabled": true,
+      "label": "Official",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "logoOverrideKey": "logos/org.png",
+      "positions": ["Flag Runner", "Head Referee", "Referee"]
+    },
+    {
+      "type": "tournament-staff",
+      "enabled": true,
+      "label": "Tournament Staff",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "positions": ["Gameplay", "Tournament Staff", "Volunteer"]
+    },
+    {
+      "type": "rare",
+      "enabled": true,
+      "label": "Rare Card",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "positions": []
+    }
+  ]
+}
+```
+
+---
+
+## Technical Decisions
+
+### Why Discriminated Union for Card Types?
+
+- Type-safe field access based on `cardType`
+- Compile-time validation of required fields
+- Clear documentation of what fields each type has
+- Easy to add new card types in the future
+- Drafts can have optional fields; submit enforces completeness
+
+### Why S3 for Tournament Config?
+
+- Tournament config is mostly static (changes rarely)
+- Easy to cache via CloudFront (fast global access)
+- Simple to version and backup (published vs draft)
+- Admin writes JSON, client reads JSON
+- No complex queries needed
+
+### Why Keep Cards in DynamoDB?
+
+- Cards are dynamic (created/updated frequently)
+- Need status queries for admin views
+- Conditional writes for idempotent submit
+- GSI for efficient listing by tournament/status
+
+### Why Published vs Draft Config?
+
+- Admin can preview changes before going live
+- Rollback if config breaks something
+- Future: scheduled publishing, A/B testing
+
+---
+
+## Migration Notes
+
+### Backward Compatibility
+
+Options:
+1. Migrate existing cards to a "legacy" tournament with `tournamentId: "legacy"`
+2. Require `tournamentId` on all new cards, archive old cards (cleaner)
+
+**Recommendation:** Option 2. Clear the deck before tournament support goes live.
+
+### URL Structure
+
+Consider adding tournament to URL for shareability:
+- `/tournament/usqc-2025/card/new`
+- `/tournament/usqc-2025/card/:id`
+
+Benefits:
+- Links preserve tournament context
+- Bookmarkable tournament landing pages
+- SEO for future public galleries
+
+---
+
+## Updated Milestones
+
+1. **Phase 0: Infra Skeleton** ✅
+2. **Phase 1: Card Builder UI** ✅
+3. **Phase 2: AWS Uploads** ✅
+4. **Phase 3: Submission Pipeline** ✅
+5. **Phase 3b: Critical Bug Fixes** ✅
+6. **Phase 4: API/Server Hardening** ✅
+7. **Phase 4b: Developer Experience** ✅
+8. **Pre-Phase 5: Critical Fixes** ← **DO FIRST**
+   - Server-side validation (max lengths, patterns)
+   - PATCH → UpdateCommand (or optimistic concurrency)
+   - Auth/abuse controls (pending new security approach)
+9. **Phase 5: Tournament Support** ✅
+   - 5a: Card Type Union + Per-Type Validation ✅
+   - 5b: Tournament ID + Hard-Coded USQC 2025 ✅
+   - 5c: S3 Config + Public Endpoints ✅
+   - 5d: Multi-Card-Type Rendering ✅
+   - 5e: Admin Portal MVP ✅
+   - 5f: Admin Bulk Operations ✅
+10. **Phase 6: UX Upgrades** - Planned
+11. **Phase 7: Polish** - Planned
+12. **Phase 8: Production** - Planned (rate limiting, monitoring, CI/CD)

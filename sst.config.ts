@@ -41,12 +41,15 @@ export default $config({
     const cardsTable = new sst.aws.Dynamo("Cards", {
       fields: {
         id: "string",
+        tournamentId: "string",
         status: "string",
         createdAt: "string",
+        statusCreatedAt: "string",
       },
       primaryIndex: { hashKey: "id" },
       globalIndexes: {
         byStatus: { hashKey: "status", rangeKey: "createdAt" },
+        byTournamentStatus: { hashKey: "tournamentId", rangeKey: "statusCreatedAt" },
       },
     });
 
@@ -71,6 +74,9 @@ export default $config({
     });
     router.routeBucket("/r", mediaBucket, {
       rewrite: { regex: "^/r/(.*)$", to: "/renders/$1" },
+    });
+    router.routeBucket("/c", mediaBucket, {
+      rewrite: { regex: "^/c/(.*)$", to: "/config/$1" },
     });
 
     const web = new sst.aws.StaticSite("Web", {
