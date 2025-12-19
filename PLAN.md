@@ -53,6 +53,18 @@
 - Max upload size: 15MB
 - Allowed types: JPEG, PNG, WebP (renders must be PNG)
 
+### API/Server Hardening ✅
+- Presign requires card exists - Verifies card ID before issuing presigned URL
+- Submit requires renderKey - Rejects if `renderKey` missing or doesn't match `renders/${id}/...png`
+- Enforce status transitions - Only allows `draft → submitted`
+- Server-side crop validation - Clamps crop values to valid ranges
+
+### Developer Experience ✅
+- Pre-commit hooks with husky + lint-staged
+- ESLint configured for all packages (client, server, shared)
+- Type checking runs on every commit
+- Root eslint.config.js for monorepo-wide linting
+
 ## Known Issues (Fixed)
 
 ### 1. Crop Values Are Wrong ✅ FIXED
@@ -84,18 +96,12 @@ Changed to `allowOrigins: ["*"]` since bucket is private and only accessible via
 
 ## Next Steps (Phase 4+)
 
-### Hardening
+### Hardening (Remaining)
 - [ ] Error handling - Better error messages, retry logic for failed uploads
 - [ ] Form validation - Required fields, jersey number format, name length limits
 - [ ] Loading states - Skeleton loaders, progress indicators during render
 - [ ] S3 lifecycle rules - Auto-delete orphaned uploads after X days
-
-### API/Server Hardening
-- [ ] Presign requires card exists - Verify card ID before issuing presigned URL to prevent orphan uploads
-- [ ] Submit requires renderKey - Reject submit if `renderKey` missing or doesn't match `renders/${id}/...png`
 - [ ] Submit requires complete card - Enforce `photo.originalKey` + dimensions + crop before allowing submit
-- [ ] Enforce status transitions - Only allow `draft → submitted` (not `submitted → submitted`)
-- [ ] Server-side crop validation - Clamp crop values: `0 <= x,y <= 1`, `0 < w,h <= 1`, `x+w <= 1`, `y+h <= 1`
 - [ ] Presigned POST for strict size enforcement - Current presigned PUT allows client to lie about `contentLength`
 
 ### Code Cleanup
@@ -241,9 +247,10 @@ Changed to `allowOrigins: ["*"]` since bucket is private and only accessible via
 
 ## Crop UX Details
 - `react-easy-crop` with drag/pinch/scroll for crop and zoom
-- Controls: Zoom In, Zoom Out, Rotate 90°, Reset
-- Crop rectangle stored as normalized coordinates (0..1) plus rotation (0/90/180/270)
+- Controls: Zoom In, Zoom Out, Reset (rotation disabled for v1)
+- Crop rectangle stored as normalized coordinates (0..1)
 - Card aspect ratio: 825:1125 (approx 0.73:1)
+- Shared constants in `shared/src/constants.ts` (CARD_WIDTH, CARD_HEIGHT, CARD_ASPECT)
 
 ## Suggested Next Milestone (Tight & Realistic)
 
@@ -275,11 +282,13 @@ Changed to `allowOrigins: ["*"]` since bucket is private and only accessible via
 3. **Phase 2: AWS Uploads** ✅
 4. **Phase 3: Submission Pipeline** ✅
 5. **Phase 3b: Critical Bug Fixes** ✅
-6. **Phase 4: Hardening** ⚠️ **← Current Priority**
-7. **Phase 4b: UX Upgrades** - Planned
-8. **Phase 5: Admin/Management** - Planned
-9. **Phase 6: Polish** - Planned
-10. **Phase 7: Production** - Planned
+6. **Phase 4: API/Server Hardening** ✅
+7. **Phase 4b: Developer Experience** ✅ (eslint, pre-commit hooks)
+8. **Phase 5: Remaining Hardening** ⚠️ **← Current Priority** (error handling, form validation, loading states)
+9. **Phase 6: UX Upgrades** - Planned
+10. **Phase 7: Admin/Management** - Planned
+11. **Phase 8: Polish** - Planned
+12. **Phase 9: Production** - Planned
 
 ## Open Questions
 - Retention period for `uploads/` and `renders/`?
@@ -287,4 +296,6 @@ Changed to `allowOrigins: ["*"]` since bucket is private and only accessible via
 - Any admin interface required in v1?
 - Custom fonts for card rendering?
 - PATCH semantics - Current impl is "merge and replace" (Get → merge → Put). Cannot unset fields, no optimistic concurrency. Accept for v1 or switch to `UpdateCommand` with explicit SET/REMOVE?
-- Rotation support - Worth fixing rotation math properly, or disable rotation for v1 and add later?
+
+## Answered Questions
+- **Rotation support** - Disabled for v1. The rotation math needs proper safe-area canvas implementation which is complex. Will revisit in a future version if needed.
