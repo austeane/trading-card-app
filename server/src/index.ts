@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type MiddlewareHandler } from 'hono'
 import { Resource } from 'sst'
 import { randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
@@ -85,6 +85,11 @@ const nowIso = () => new Date().toISOString()
 
 const isCardStatus = (value: unknown): value is CardStatus =>
   value === 'draft' || value === 'submitted' || value === 'rendered'
+
+// Validate IDs used in S3 paths to prevent path traversal and URL issues
+const SAFE_ID_PATTERN = /^[a-z0-9-]{3,64}$/
+const isSafeId = (value: unknown): value is string =>
+  typeof value === 'string' && SAFE_ID_PATTERN.test(value)
 
 const isCardType = (value: unknown): value is CardType =>
   typeof value === 'string' && CARD_TYPES.includes(value as CardType)
@@ -498,6 +503,20 @@ app.use('*', async (c, next) => {
   await next()
 })
 
+// Admin auth middleware - requires Bearer token matching AdminPassword secret
+const requireAdmin: MiddlewareHandler = async (c, next) => {
+  const auth = c.req.header('Authorization')
+  const expected = `Bearer ${Resource.AdminPassword.value}`
+
+  if (auth !== expected) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  await next()
+}
+
+// Protect all admin routes
+app.use('/admin/*', requireAdmin)
+
 const FALLBACK_TOURNAMENTS: TournamentListEntry[] = [USQC_2025_TOURNAMENT]
 const FALLBACK_CONFIGS: Record<string, TournamentConfig> = {
   [USQC_2025_CONFIG.id]: USQC_2025_CONFIG,
@@ -516,7 +535,8 @@ app.get('/hello', (c) => {
 
 app.get('/tournaments', async (c) => {
   const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
-  return c.json(list)
+  // Only return published tournaments to public
+  return c.json(list.filter((t) => t.published))
 })
 
 app.get('/tournaments/:id', async (c) => {
@@ -573,6 +593,7 @@ app.post('/admin/tournaments', async (c) => {
   const year = toNumber(body.year)
 
   if (!id) return badRequest(c, 'id is required')
+  if (!isSafeId(id)) return badRequest(c, 'id must be 3-64 lowercase alphanumeric characters or hyphens')
   if (!name) return badRequest(c, 'name is required')
   if (!year || year < 2000) return badRequest(c, 'year is required')
 
@@ -609,6 +630,13 @@ app.put('/admin/tournaments/:id', async (c) => {
   const config = body as TournamentConfig
   if (!config.name || !config.year) {
     return badRequest(c, 'name and year are required')
+  }
+
+  // Validate team IDs to prevent path traversal in S3 keys
+  for (const team of config.teams ?? []) {
+    if (!isSafeId(team.id)) {
+      return badRequest(c, `Team id "${team.id}" must be 3-64 lowercase alphanumeric characters or hyphens`)
+    }
   }
 
   config.id = id
@@ -890,11 +918,21 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
   if (!config.id || typeof config.id !== 'string') {
     return badRequest(c, 'config.json must have a valid id')
   }
+  if (!isSafeId(config.id)) {
+    return badRequest(c, 'config.id must be 3-64 lowercase alphanumeric characters or hyphens')
+  }
   if (!config.name || typeof config.name !== 'string') {
     return badRequest(c, 'config.json must have a valid name')
   }
   if (!config.year || typeof config.year !== 'number') {
     return badRequest(c, 'config.json must have a valid year')
+  }
+
+  // Validate team IDs
+  for (const team of config.teams ?? []) {
+    if (!isSafeId(team.id)) {
+      return badRequest(c, `Team id "${team.id}" must be 3-64 lowercase alphanumeric characters or hyphens`)
+    }
   }
 
   const id = config.id
@@ -1129,6 +1167,11 @@ app.get('/cards', async (c) => {
   const statusParam = c.req.query('status')
   if (!isCardStatus(statusParam)) {
     return badRequest(c, 'status query param is required')
+  }
+
+  // Don't expose draft cards publicly - use /admin/cards for drafts
+  if (statusParam === 'draft') {
+    return c.json({ error: 'Draft cards require admin access' }, 403)
   }
 
   const tournamentId = c.req.query('tournamentId')
@@ -1496,6 +1539,57 @@ app.post('/cards/:id/submit', async (c) => {
     }
     throw err
   }
+})
+
+// Admin cards listing - allows all statuses including drafts
+app.get('/admin/cards', async (c) => {
+  const statusParam = c.req.query('status')
+  if (!isCardStatus(statusParam)) {
+    return badRequest(c, 'status query param is required')
+  }
+
+  const tournamentId = c.req.query('tournamentId')
+  const limitParam = c.req.query('limit')
+  const limit = Math.min(100, Math.max(1, limitParam ? Number(limitParam) : 50))
+
+  if (tournamentId) {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: Resource.Cards.name,
+        IndexName: 'byTournamentStatus',
+        KeyConditionExpression:
+          '#tournamentId = :tournamentId AND begins_with(#statusCreatedAt, :statusPrefix)',
+        ExpressionAttributeNames: {
+          '#tournamentId': 'tournamentId',
+          '#statusCreatedAt': 'statusCreatedAt',
+        },
+        ExpressionAttributeValues: {
+          ':tournamentId': tournamentId,
+          ':statusPrefix': `${statusParam}#`,
+        },
+        ScanIndexForward: false,
+        Limit: limit,
+      })
+    )
+    return c.json(result.Items ?? [])
+  }
+
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: Resource.Cards.name,
+      IndexName: 'byStatus',
+      KeyConditionExpression: '#status = :status',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+      },
+      ExpressionAttributeValues: {
+        ':status': statusParam,
+      },
+      ScanIndexForward: false,
+      Limit: limit,
+    })
+  )
+  return c.json(result.Items ?? [])
 })
 
 app.post('/admin/cards/:id/render', async (c) => {

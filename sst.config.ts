@@ -10,6 +10,7 @@ export default $config({
     };
   },
   async run() {
+    const adminPassword = new sst.Secret("AdminPassword");
     const router = new sst.aws.Router("CardRouter");
 
     const mediaBucket = new sst.aws.Bucket("Media", {
@@ -63,7 +64,7 @@ export default $config({
           allowHeaders: ["Content-Type", "Authorization"],
         },
       },
-      link: [mediaBucket, cardsTable],
+      link: [mediaBucket, cardsTable, adminPassword],
     });
 
     router.route("/api", api.url, {

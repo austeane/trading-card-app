@@ -27,46 +27,20 @@ const cardDisplayName = (card: Card) => {
   return fullName || 'Unnamed card'
 }
 
-const fetchJson = async <T,>(path: string) => {
-  const res = await fetch(api(path))
-  if (!res.ok) {
-    throw new Error('Request failed')
-  }
-  return res.json() as Promise<T>
-}
-
-const postJson = async <T,>(path: string, body: unknown) => {
-  const res = await fetch(api(path), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}))
-    throw new Error(error.error ?? 'Request failed')
-  }
-  return res.json() as Promise<T>
-}
-
-const putJson = async <T,>(path: string, body: unknown) => {
-  const res = await fetch(api(path), {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}))
-    throw new Error(error.error ?? 'Request failed')
-  }
-  return res.json() as Promise<T>
-}
+// Sanitize filenames for ZIP entries to prevent Zip Slip attacks
+const safeZipName = (value: string) =>
+  value
+    .normalize('NFKD')
+    .replace(/[/\\]/g, '-')           // kill path separators
+    .replace(/\.\./g, '.')            // kill traversal
+    .replace(/[^a-zA-Z0-9._ -]/g, '') // strip weird chars
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 60) || 'card'
 
 export default function Admin() {
   const queryClient = useQueryClient()
+  const [adminPassword, setAdminPassword] = useState(() => localStorage.getItem('adminPassword') ?? '')
   const [activeTournamentId, setActiveTournamentId] = useState('')
   const [configDraft, setConfigDraft] = useState('')
   const [statusFilter, setStatusFilter] = useState('submitted')
@@ -75,9 +49,25 @@ export default function Admin() {
   const [bundleFile, setBundleFile] = useState<File | null>(null)
   const [bundleResult, setBundleResult] = useState<BundleImportResult | null>(null)
 
+  // Save password to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('adminPassword', adminPassword)
+  }, [adminPassword])
+
+  // Auth headers for admin API calls
+  const adminHeaders = useMemo(() => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${adminPassword}`,
+  }), [adminPassword])
+
   const tournamentsQuery = useQuery({
-    queryKey: ['admin-tournaments'],
-    queryFn: () => fetchJson<TournamentListEntry[]>('/admin/tournaments'),
+    queryKey: ['admin-tournaments', adminPassword],
+    queryFn: async () => {
+      const res = await fetch(api('/admin/tournaments'), { headers: adminHeaders })
+      if (!res.ok) throw new Error('Request failed')
+      return res.json() as Promise<TournamentListEntry[]>
+    },
+    enabled: Boolean(adminPassword),
   })
 
   useEffect(() => {
@@ -87,9 +77,13 @@ export default function Admin() {
   }, [activeTournamentId, tournamentsQuery.data])
 
   const configQuery = useQuery({
-    queryKey: ['admin-config', activeTournamentId],
-    queryFn: () => fetchJson<TournamentConfig>(`/admin/tournaments/${activeTournamentId}`),
-    enabled: Boolean(activeTournamentId),
+    queryKey: ['admin-config', activeTournamentId, adminPassword],
+    queryFn: async () => {
+      const res = await fetch(api(`/admin/tournaments/${activeTournamentId}`), { headers: adminHeaders })
+      if (!res.ok) throw new Error('Request failed')
+      return res.json() as Promise<TournamentConfig>
+    },
+    enabled: Boolean(activeTournamentId) && Boolean(adminPassword),
   })
 
   useEffect(() => {
@@ -99,19 +93,30 @@ export default function Admin() {
   }, [configQuery.data])
 
   const cardsQuery = useQuery({
-    queryKey: ['admin-cards', statusFilter, activeTournamentId],
-    queryFn: () =>
-      fetchJson<Card[]>(
-        `/cards?status=${encodeURIComponent(statusFilter)}${
-          activeTournamentId ? `&tournamentId=${encodeURIComponent(activeTournamentId)}` : ''
-        }`
-      ),
+    queryKey: ['admin-cards', statusFilter, activeTournamentId, adminPassword],
+    queryFn: async () => {
+      const params = new URLSearchParams({ status: statusFilter })
+      if (activeTournamentId) params.set('tournamentId', activeTournamentId)
+      const res = await fetch(api(`/admin/cards?${params}`), { headers: adminHeaders })
+      if (!res.ok) throw new Error('Request failed')
+      return res.json() as Promise<Card[]>
+    },
+    enabled: Boolean(adminPassword),
   })
 
   const saveConfigMutation = useMutation({
     mutationFn: async () => {
       const parsed = JSON.parse(configDraft) as TournamentConfig
-      return putJson<TournamentConfig>(`/admin/tournaments/${activeTournamentId}`, parsed)
+      const res = await fetch(api(`/admin/tournaments/${activeTournamentId}`), {
+        method: 'PUT',
+        headers: adminHeaders,
+        body: JSON.stringify(parsed),
+      })
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error ?? 'Request failed')
+      }
+      return res.json() as Promise<TournamentConfig>
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-config', activeTournamentId] })
@@ -119,7 +124,18 @@ export default function Admin() {
   })
 
   const publishMutation = useMutation({
-    mutationFn: async () => postJson(`/admin/tournaments/${activeTournamentId}/publish`, {}),
+    mutationFn: async () => {
+      const res = await fetch(api(`/admin/tournaments/${activeTournamentId}/publish`), {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error ?? 'Request failed')
+      }
+      return res.json()
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
     },
@@ -130,6 +146,7 @@ export default function Admin() {
       if (!logosZipFile) throw new Error('Select a ZIP file')
       const res = await fetch(api(`/admin/tournaments/${activeTournamentId}/logos-zip`), {
         method: 'POST',
+        headers: { 'Authorization': `Bearer ${adminPassword}` },
         body: logosZipFile,
       })
       if (!res.ok) {
@@ -149,6 +166,7 @@ export default function Admin() {
       if (!bundleFile) throw new Error('Select a ZIP file')
       const res = await fetch(api('/admin/tournaments/import-bundle'), {
         method: 'POST',
+        headers: { 'Authorization': `Bearer ${adminPassword}` },
         body: bundleFile,
       })
       if (!res.ok) {
@@ -167,17 +185,35 @@ export default function Admin() {
   })
 
   const renderMutation = useMutation({
-    mutationFn: async (id: string) => postJson(`/admin/cards/${id}/render`, {}),
+    mutationFn: async (id: string) => {
+      const res = await fetch(api(`/admin/cards/${id}/render`), {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error ?? 'Request failed')
+      }
+      return res.json()
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-cards', statusFilter, activeTournamentId] })
     },
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) =>
-      fetch(api(`/admin/cards/${id}`), {
+    mutationFn: async (id: string) => {
+      const res = await fetch(api(`/admin/cards/${id}`), {
         method: 'DELETE',
-      }),
+        headers: { 'Authorization': `Bearer ${adminPassword}` },
+      })
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error ?? 'Delete failed')
+      }
+      return res.json()
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-cards', statusFilter, activeTournamentId] })
     },
@@ -191,14 +227,103 @@ export default function Admin() {
     }
   }, [configDraft])
 
+  // Show login screen when no password entered
+  if (!adminPassword) {
+    return (
+      <div className="app-shell min-h-screen">
+        <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
+          <div className="w-full rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
+            <h1 className="font-display text-3xl text-white text-center">Admin Console</h1>
+            <p className="mt-2 text-sm text-slate-400 text-center">
+              Enter the admin password to continue.
+            </p>
+            <div className="mt-6">
+              <label htmlFor="admin-password" className="block text-xs text-slate-400 mb-2">
+                Password
+              </label>
+              <input
+                id="admin-password"
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder="Enter admin password"
+                className="w-full rounded-xl border border-white/20 bg-slate-950/50 px-4 py-3 text-sm text-white placeholder:text-slate-500"
+                autoFocus
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show error state if password is wrong
+  if (tournamentsQuery.isError) {
+    return (
+      <div className="app-shell min-h-screen">
+        <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
+          <div className="w-full rounded-3xl border border-rose-500/20 bg-rose-500/5 p-8 backdrop-blur">
+            <h1 className="font-display text-3xl text-white text-center">Access Denied</h1>
+            <p className="mt-2 text-sm text-rose-400 text-center">
+              Invalid password. Please try again.
+            </p>
+            <div className="mt-6">
+              <label htmlFor="admin-password" className="block text-xs text-slate-400 mb-2">
+                Password
+              </label>
+              <input
+                id="admin-password"
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder="Enter admin password"
+                className="w-full rounded-xl border border-white/20 bg-slate-950/50 px-4 py-3 text-sm text-white placeholder:text-slate-500"
+                autoFocus
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAdminPassword('')
+                queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
+              }}
+              className="mt-4 w-full rounded-xl border border-white/20 px-4 py-2 text-xs text-slate-400 hover:bg-white/5"
+            >
+              Clear and try again
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell min-h-screen">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-12">
-        <header>
-          <h1 className="font-display text-4xl text-white">Admin Console</h1>
-          <p className="text-sm text-slate-400">
-            Manage tournaments, upload assets, and review submissions.
-          </p>
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-4xl text-white">Admin Console</h1>
+            <p className="text-sm text-slate-400">
+              Manage tournaments, upload assets, and review submissions.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Authenticated
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setAdminPassword('')
+                localStorage.removeItem('adminPassword')
+                queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
+              }}
+              className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 hover:bg-white/5"
+            >
+              Sign out
+            </button>
+          </div>
         </header>
 
         <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
@@ -347,13 +472,25 @@ export default function Admin() {
                 </pre>
               </div>
               <div className="mt-4 flex flex-wrap gap-3">
-                <a
-                  href={api(`/admin/tournaments/${activeTournamentId}/bundle`)}
-                  download
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await fetch(api(`/admin/tournaments/${activeTournamentId}/bundle`), {
+                      headers: { 'Authorization': `Bearer ${adminPassword}` },
+                    })
+                    if (!res.ok) return
+                    const blob = await res.blob()
+                    const url = URL.createObjectURL(blob)
+                    const link = document.createElement('a')
+                    link.href = url
+                    link.download = `${activeTournamentId}-bundle.zip`
+                    link.click()
+                    URL.revokeObjectURL(url)
+                  }}
                   className="rounded-full border border-emerald-500/40 px-4 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10"
                 >
                   Export Bundle
-                </a>
+                </button>
               </div>
               <div className="mt-4 border-t border-white/10 pt-4">
                 <p className="text-xs text-slate-500 mb-2">Import a new tournament:</p>
@@ -415,10 +552,12 @@ export default function Admin() {
                     const name = card.cardType === 'rare'
                       ? (card.title ?? 'rare-card')
                       : [card.firstName, card.lastName].filter(Boolean).join('-') || 'card'
-                    const filename = `${name}-${card.id.slice(0, 8)}.png`
+                    const filename = `${safeZipName(name)}-${card.id.slice(0, 8)}.png`
 
                     // Use presigned download URL from API to avoid CORS issues
-                    const res = await fetch(api(`/admin/cards/${card.id}/download-url`))
+                    const res = await fetch(api(`/admin/cards/${card.id}/download-url`), {
+                      headers: { 'Authorization': `Bearer ${adminPassword}` },
+                    })
                     if (res.ok) {
                       const { url: downloadUrl } = await res.json()
                       const imageRes = await fetch(downloadUrl)

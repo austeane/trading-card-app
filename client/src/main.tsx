@@ -12,8 +12,16 @@ const sentryDsn =
 
 Sentry.init({
   dsn: sentryDsn,
-  sendDefaultPii: true,
-  integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
+  sendDefaultPii: false, // Don't send PII - users upload personal photos
+  integrations: [
+    Sentry.browserTracingIntegration(),
+    Sentry.replayIntegration({
+      // Block media to avoid recording user photos in replays
+      blockAllMedia: true,
+      // Mask all text inputs for privacy
+      maskAllText: true,
+    }),
+  ],
   tracesSampleRate: 1.0,
   tracePropagationTargets: [
     'localhost',
