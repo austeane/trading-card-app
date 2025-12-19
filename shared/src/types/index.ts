@@ -31,6 +31,7 @@ export type CardPhoto = {
 
 export type CardBase = {
   id: string;
+  editToken?: string;
   tournamentId: string;
   cardType: CardType;
   templateId?: string;

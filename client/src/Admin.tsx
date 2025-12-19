@@ -40,7 +40,8 @@ const safeZipName = (value: string) =>
 
 export default function Admin() {
   const queryClient = useQueryClient()
-  const [adminPassword, setAdminPassword] = useState(() => localStorage.getItem('adminPassword') ?? '')
+  const [passwordInput, setPasswordInput] = useState('')
+  const [adminPassword, setAdminPassword] = useState(() => sessionStorage.getItem('adminPassword') ?? '')
   const [activeTournamentId, setActiveTournamentId] = useState('')
   const [configDraft, setConfigDraft] = useState('')
   const [statusFilter, setStatusFilter] = useState('submitted')
@@ -49,10 +50,18 @@ export default function Admin() {
   const [bundleFile, setBundleFile] = useState<File | null>(null)
   const [bundleResult, setBundleResult] = useState<BundleImportResult | null>(null)
 
-  // Save password to localStorage when it changes
+  // Save password to sessionStorage when it changes
   useEffect(() => {
-    localStorage.setItem('adminPassword', adminPassword)
+    if (adminPassword) {
+      sessionStorage.setItem('adminPassword', adminPassword)
+    }
   }, [adminPassword])
+
+  const handleLogin = () => {
+    if (passwordInput.trim()) {
+      setAdminPassword(passwordInput.trim())
+    }
+  }
 
   // Auth headers for admin API calls
   const adminHeaders = useMemo(() => ({
@@ -227,6 +236,22 @@ export default function Admin() {
     }
   }, [configDraft])
 
+  // Show loading state while verifying password
+  if (adminPassword && tournamentsQuery.isPending) {
+    return (
+      <div className="app-shell min-h-screen">
+        <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
+          <div className="w-full rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
+            <h1 className="font-display text-3xl text-white text-center">Admin Console</h1>
+            <p className="mt-2 text-sm text-slate-400 text-center">
+              Verifying credentials...
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Show login screen when no password entered
   if (!adminPassword) {
     return (
@@ -237,20 +262,33 @@ export default function Admin() {
             <p className="mt-2 text-sm text-slate-400 text-center">
               Enter the admin password to continue.
             </p>
-            <div className="mt-6">
+            <form
+              className="mt-6"
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleLogin()
+              }}
+            >
               <label htmlFor="admin-password" className="block text-xs text-slate-400 mb-2">
                 Password
               </label>
               <input
                 id="admin-password"
                 type="password"
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
                 placeholder="Enter admin password"
                 className="w-full rounded-xl border border-white/20 bg-slate-950/50 px-4 py-3 text-sm text-white placeholder:text-slate-500"
                 autoFocus
               />
-            </div>
+              <button
+                type="submit"
+                disabled={!passwordInput.trim()}
+                className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 disabled:opacity-50"
+              >
+                Sign In
+              </button>
+            </form>
           </div>
         </div>
       </div>
@@ -267,24 +305,39 @@ export default function Admin() {
             <p className="mt-2 text-sm text-rose-400 text-center">
               Invalid password. Please try again.
             </p>
-            <div className="mt-6">
+            <form
+              className="mt-6"
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleLogin()
+              }}
+            >
               <label htmlFor="admin-password" className="block text-xs text-slate-400 mb-2">
                 Password
               </label>
               <input
                 id="admin-password"
                 type="password"
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
                 placeholder="Enter admin password"
                 className="w-full rounded-xl border border-white/20 bg-slate-950/50 px-4 py-3 text-sm text-white placeholder:text-slate-500"
                 autoFocus
               />
-            </div>
+              <button
+                type="submit"
+                disabled={!passwordInput.trim()}
+                className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 disabled:opacity-50"
+              >
+                Sign In
+              </button>
+            </form>
             <button
               type="button"
               onClick={() => {
                 setAdminPassword('')
+                setPasswordInput('')
+                sessionStorage.removeItem('adminPassword')
                 queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
               }}
               className="mt-4 w-full rounded-xl border border-white/20 px-4 py-2 text-xs text-slate-400 hover:bg-white/5"
@@ -316,7 +369,8 @@ export default function Admin() {
               type="button"
               onClick={() => {
                 setAdminPassword('')
-                localStorage.removeItem('adminPassword')
+                setPasswordInput('')
+                sessionStorage.removeItem('adminPassword')
                 queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
               }}
               className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 hover:bg-white/5"

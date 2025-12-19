@@ -70,9 +70,6 @@ export default $config({
     router.route("/api", api.url, {
       rewrite: { regex: "^/api/(.*)$", to: "/$1" },
     });
-    router.routeBucket("/u", mediaBucket, {
-      rewrite: { regex: "^/u/(.*)$", to: "/uploads/$1" },
-    });
     router.routeBucket("/r", mediaBucket, {
       rewrite: { regex: "^/r/(.*)$", to: "/renders/$1" },
     });

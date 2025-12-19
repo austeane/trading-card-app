@@ -10,7 +10,20 @@ import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectComman
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import type { ApiResponse, Card, CardStatus, CardType, CropRect, TournamentConfig, TournamentListEntry } from 'shared'
-import { USQC_2025_CONFIG, USQC_2025_TOURNAMENT } from 'shared'
+import {
+  ALLOWED_RENDER_TYPES as ALLOWED_RENDER_TYPES_LIST,
+  ALLOWED_UPLOAD_TYPES as ALLOWED_UPLOAD_TYPES_LIST,
+  JERSEY_PATTERN,
+  MAX_CAPTION_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_PHOTOGRAPHER_LENGTH,
+  MAX_POSITION_LENGTH,
+  MAX_TEAM_LENGTH,
+  MAX_TITLE_LENGTH,
+  MAX_UPLOAD_BYTES,
+  USQC_2025_CONFIG,
+  USQC_2025_TOURNAMENT,
+} from 'shared'
 
 const app = new Hono()
 
@@ -19,6 +32,7 @@ const app = new Hono()
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX = 60
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+const adminAuthFailures = new Map<string, { count: number; resetAt: number }>()
 
 const getClientIp = (c: { req: { header: (name: string) => string | undefined } }) =>
   c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
@@ -32,21 +46,16 @@ const shouldRateLimit = (method: string) =>
 const s3 = new S3Client({})
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
 
-const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
-const ALLOWED_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
-const ALLOWED_RENDER_TYPES = new Set(['image/png'])
+const ALLOWED_UPLOAD_TYPES: Set<string> = new Set(ALLOWED_UPLOAD_TYPES_LIST)
+const ALLOWED_RENDER_TYPES: Set<string> = new Set(ALLOWED_RENDER_TYPES_LIST)
 const RENDER_EXTENSION = 'png'
 const CONFIG_LIST_KEY = 'config/tournaments.json'
 const CONFIG_PREFIX = 'config/tournaments'
 
-const MAX_NAME_LENGTH = 24
-const MAX_TITLE_LENGTH = 48
-const MAX_CAPTION_LENGTH = 120
-const MAX_PHOTOGRAPHER_LENGTH = 48
-const MAX_TEAM_LENGTH = 64
-const MAX_POSITION_LENGTH = 32
 const MAX_TEMPLATE_LENGTH = 32
-const JERSEY_PATTERN = /^\d{1,2}$/
+const EDIT_TOKEN_HEADER = 'x-edit-token'
+const ADMIN_AUTH_WINDOW_MS = 10 * 60_000
+const ADMIN_AUTH_MAX_FAILURES = 8
 
 const CARD_TYPES: CardType[] = [
   'player',
@@ -372,10 +381,6 @@ const getUploadKey = (cardId: string, kind: PresignKind, contentType: string) =>
 }
 
 const getPublicPath = (key: string) => {
-  if (key.startsWith('uploads/')) {
-    return `/u/${key.slice('uploads/'.length)}`
-  }
-
   if (key.startsWith('renders/')) {
     return `/r/${key.slice('renders/'.length)}`
   }
@@ -384,7 +389,23 @@ const getPublicPath = (key: string) => {
     return `/c/${key.slice('config/'.length)}`
   }
 
-  return `/${key}`
+  return null
+}
+
+const toPublicCard = (card: Card) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { photo, editToken, ...rest } = card
+
+  if (!photo?.crop) {
+    return rest
+  }
+
+  return {
+    ...rest,
+    photo: {
+      crop: photo.crop,
+    },
+  }
 }
 
 const getJsonBody = async (c: { req: { json: () => Promise<unknown> } }) => {
@@ -486,7 +507,7 @@ const applyStringUpdate = (
 }
 
 app.use('*', async (c, next) => {
-  if (shouldRateLimit(c.req.method)) {
+  if (shouldRateLimit(c.req.method) || c.req.path.startsWith('/admin/')) {
     const ip = getClientIp(c)
     const now = Date.now()
     const entry = rateLimitMap.get(ip)
@@ -507,10 +528,28 @@ app.use('*', async (c, next) => {
 const requireAdmin: MiddlewareHandler = async (c, next) => {
   const auth = c.req.header('Authorization')
   const expected = `Bearer ${Resource.AdminPassword.value}`
+  const ip = getClientIp(c)
+  const now = Date.now()
+  const failure = adminAuthFailures.get(ip)
+
+  if (failure && now <= failure.resetAt && failure.count > ADMIN_AUTH_MAX_FAILURES) {
+    return c.json({ error: 'Too many attempts' }, 429)
+  }
 
   if (auth !== expected) {
+    const entry = adminAuthFailures.get(ip)
+    if (!entry || now > entry.resetAt) {
+      adminAuthFailures.set(ip, { count: 1, resetAt: now + ADMIN_AUTH_WINDOW_MS })
+    } else {
+      entry.count += 1
+      if (entry.count > ADMIN_AUTH_MAX_FAILURES) {
+        return c.json({ error: 'Too many attempts' }, 429)
+      }
+    }
     return c.json({ error: 'Unauthorized' }, 401)
   }
+
+  adminAuthFailures.delete(ip)
   await next()
 }
 
@@ -786,13 +825,16 @@ app.post('/admin/tournaments/:id/assets/presign', async (c) => {
     Expires: 900,
   })
 
-  return c.json({
+  const publicUrl = getPublicPath(key)
+  const response: Record<string, unknown> = {
     uploadUrl: url,
     key,
-    publicUrl: getPublicPath(key),
     method: 'POST',
     fields,
-  })
+  }
+  if (publicUrl) response.publicUrl = publicUrl
+
+  return c.json(response)
 })
 
 app.post('/admin/tournaments/:id/publish', async (c) => {
@@ -1008,7 +1050,15 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
     teamsFolder.forEach((relativePath, file) => {
       if (file.dir || !relativePath.toLowerCase().endsWith('.png')) return
 
-      const teamId = relativePath.slice(0, -4)
+      const filename = relativePath.split('/').pop() ?? relativePath
+      if (!filename.toLowerCase().endsWith('.png')) return
+
+      const teamId = filename.slice(0, -4)
+      if (!isSafeId(teamId)) {
+        results.assetsSkipped.push(`teams/${filename} (invalid team id)`)
+        return
+      }
+
       teamPromises.push(
         (async () => {
           const data = await file.async('nodebuffer')
@@ -1071,6 +1121,16 @@ app.post('/uploads/presign', async (c) => {
     return c.json({ error: 'Card not found' }, 404)
   }
 
+  const editToken = normalizeString(c.req.header(EDIT_TOKEN_HEADER))
+  if (!editToken) {
+    return c.json({ error: 'Edit token is required' }, 401)
+  }
+
+  const card = existingCard.Item as Card
+  if (!card.editToken || card.editToken !== editToken) {
+    return c.json({ error: 'Invalid edit token' }, 403)
+  }
+
   const length = typeof contentLength === 'number' ? contentLength : Number(contentLength)
 
   if (!Number.isFinite(length) || length <= 0) {
@@ -1105,15 +1165,16 @@ app.post('/uploads/presign', async (c) => {
     ],
     Expires: 900,
   })
-  const publicUrl = getPublicPath(key)
-
-  return c.json({
+  const publicUrl = kind === 'render' ? getPublicPath(key) : null
+  const response: Record<string, unknown> = {
     uploadUrl: url,
     key,
-    publicUrl,
     method: 'POST',
     fields,
-  })
+  }
+  if (publicUrl) response.publicUrl = publicUrl
+
+  return c.json(response)
 })
 
 app.post('/cards', async (c) => {
@@ -1122,6 +1183,7 @@ app.post('/cards', async (c) => {
 
   const now = nowIso()
   const id = randomUUID()
+  const editToken = randomUUID()
   const input = pickCardInput(body)
   const { cardType, tournamentId, ...rest } = input
 
@@ -1139,6 +1201,7 @@ app.post('/cards', async (c) => {
 
   const record: Card = {
     id,
+    editToken,
     tournamentId,
     cardType,
     status: 'draft',
@@ -1198,7 +1261,8 @@ app.get('/cards', async (c) => {
       })
     )
 
-    return c.json(result.Items ?? [])
+    const items = (result.Items ?? []) as Card[]
+    return c.json(items.map(toPublicCard))
   }
 
   const result = await ddb.send(
@@ -1217,7 +1281,8 @@ app.get('/cards', async (c) => {
     })
   )
 
-  return c.json(result.Items ?? [])
+  const items = (result.Items ?? []) as Card[]
+  return c.json(items.map(toPublicCard))
 })
 
 app.get('/cards/:id', async (c) => {
@@ -1234,13 +1299,18 @@ app.get('/cards/:id', async (c) => {
     return c.json({ error: 'Card not found' }, 404)
   }
 
-  return c.json(result.Item)
+  return c.json(toPublicCard(result.Item as Card))
 })
 
 app.patch('/cards/:id', async (c) => {
   const id = c.req.param('id')
   const body = await getJsonBody(c)
   if (!isRecord(body)) return badRequest(c, 'Invalid request body')
+
+  const editToken = normalizeString(c.req.header(EDIT_TOKEN_HEADER))
+  if (!editToken) {
+    return c.json({ error: 'Edit token is required' }, 401)
+  }
 
   const now = nowIso()
   if ('cardType' in body || 'tournamentId' in body || 'type' in body) {
@@ -1397,6 +1467,9 @@ app.patch('/cards/:id', async (c) => {
     removes.push(pathToExpression(path))
   }
 
+  values[':draft'] = 'draft'
+  values[':editToken'] = editToken
+
   const updateExpressions = []
   if (sets.length > 0) updateExpressions.push(`SET ${sets.join(', ')}`)
   if (removes.length > 0) updateExpressions.push(`REMOVE ${removes.join(', ')}`)
@@ -1407,10 +1480,12 @@ app.patch('/cards/:id', async (c) => {
         TableName: Resource.Cards.name,
         Key: { id },
         UpdateExpression: updateExpressions.join(' '),
-        ConditionExpression: 'attribute_exists(#id)',
+        ConditionExpression: 'attribute_exists(#id) AND #status = :draft AND #editToken = :editToken',
         ExpressionAttributeNames: {
           ...names,
           '#id': 'id',
+          '#status': 'status',
+          '#editToken': 'editToken',
         },
         ExpressionAttributeValues: values,
         ReturnValues: 'ALL_NEW',
@@ -1424,7 +1499,23 @@ app.patch('/cards/:id', async (c) => {
     return c.json(result.Attributes)
   } catch (err) {
     if (err instanceof ConditionalCheckFailedException || (isRecord(err) && err.name === 'ConditionalCheckFailedException')) {
-      return c.json({ error: 'Card not found' }, 404)
+      const latest = await ddb.send(
+        new GetCommand({
+          TableName: Resource.Cards.name,
+          Key: { id },
+        })
+      )
+
+      if (!latest.Item) {
+        return c.json({ error: 'Card not found' }, 404)
+      }
+
+      const current = latest.Item as Card
+      if (!current.editToken || current.editToken !== editToken) {
+        return c.json({ error: 'Invalid edit token' }, 403)
+      }
+
+      return c.json({ error: 'Card is no longer editable' }, 409)
     }
     throw err
   }
@@ -1445,6 +1536,13 @@ app.post('/cards/:id/submit', async (c) => {
   }
 
   const card = existing.Item as Card
+  const editToken = normalizeString(c.req.header(EDIT_TOKEN_HEADER))
+  if (!editToken) {
+    return c.json({ error: 'Edit token is required' }, 401)
+  }
+  if (!card.editToken || card.editToken !== editToken) {
+    return c.json({ error: 'Invalid edit token' }, 403)
+  }
 
   // Enforce status transition: only draft can be submitted (idempotent return)
   if (card.status !== 'draft') {
@@ -1484,7 +1582,7 @@ app.post('/cards/:id/submit', async (c) => {
   }
 
   const now = nowIso()
-  const statusCreatedAt = buildStatusCreatedAt('submitted', card.createdAt)
+  const statusCreatedAt = buildStatusCreatedAt('submitted', now)
   try {
     const result = await ddb.send(
       new UpdateCommand({
@@ -1610,7 +1708,7 @@ app.post('/admin/cards/:id/render', async (c) => {
   if (card.status !== 'submitted') {
     return badRequest(c, 'Only submitted cards can be marked rendered')
   }
-  const statusCreatedAt = buildStatusCreatedAt('rendered', card.createdAt)
+  const statusCreatedAt = buildStatusCreatedAt('rendered', now)
 
   const result = await ddb.send(
     new UpdateCommand({

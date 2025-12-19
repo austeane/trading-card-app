@@ -2,7 +2,17 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragE
 import Cropper, { type Area, type MediaSize, type Point } from 'react-easy-crop'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
+  ALLOWED_UPLOAD_TYPES as ALLOWED_UPLOAD_TYPES_LIST,
   CARD_ASPECT,
+  JERSEY_PATTERN,
+  MAX_CAPTION_LENGTH,
+  MAX_JERSEY_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_PHOTOGRAPHER_LENGTH,
+  MAX_POSITION_LENGTH,
+  MAX_TEAM_LENGTH,
+  MAX_TITLE_LENGTH,
+  MAX_UPLOAD_BYTES,
   type ApiResponse,
   type Card,
   type CardType,
@@ -15,16 +25,7 @@ import {
 import { renderCard, renderCropBlob } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 
-const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
-const ALLOWED_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
-const MAX_NAME_LENGTH = 24
-const MAX_TITLE_LENGTH = 48
-const MAX_CAPTION_LENGTH = 120
-const MAX_TEAM_LENGTH = 64
-const MAX_POSITION_LENGTH = 32
-const MAX_PHOTOGRAPHER_LENGTH = 48
-const MAX_JERSEY_LENGTH = 2
-const JERSEY_PATTERN = /^\d{1,2}$/
+const ALLOWED_UPLOAD_TYPES: Set<string> = new Set(ALLOWED_UPLOAD_TYPES_LIST)
 const MAX_UPLOAD_RETRIES = 1
 const MAX_IMAGE_DIMENSION = 2600
 
@@ -51,7 +52,7 @@ type PhotoState = {
 
 type UploadedPhoto = {
   key: string
-  publicUrl: string
+  publicUrl?: string
   width: number
   height: number
   cropKey?: string
@@ -84,7 +85,7 @@ type Rotation = CropRect['rotateDeg']
 type PresignResponse = {
   uploadUrl: string
   key: string
-  publicUrl: string
+  publicUrl?: string
   method: 'POST' | 'PUT'
   headers?: Record<string, string>
   fields?: Record<string, string>
@@ -164,6 +165,12 @@ async function fetchTournamentConfig(id: string): Promise<TournamentConfig> {
   return res.json()
 }
 
+const editHeadersFor = (editToken: string): HeadersInit => ({
+  'Content-Type': 'application/json',
+  ...writeHeaders,
+  'X-Edit-Token': editToken,
+})
+
 async function createCard(payload: SavePayload): Promise<Card> {
   const res = await fetch(api('/cards'), {
     method: 'POST',
@@ -178,10 +185,10 @@ async function createCard(payload: SavePayload): Promise<Card> {
   return res.json()
 }
 
-async function updateCard(id: string, payload: SavePayload): Promise<Card> {
+async function updateCard(id: string, payload: SavePayload, editToken: string): Promise<Card> {
   const res = await fetch(api(`/cards/${id}`), {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...writeHeaders },
+    headers: editHeadersFor(editToken),
     body: JSON.stringify(payload),
   })
 
@@ -195,11 +202,12 @@ async function updateCard(id: string, payload: SavePayload): Promise<Card> {
 async function requestPresignFor(
   cardId: string,
   data: Blob,
-  kind: 'original' | 'crop' | 'render'
+  kind: 'original' | 'crop' | 'render',
+  editToken: string
 ): Promise<PresignResponse> {
   const res = await fetch(api('/uploads/presign'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...writeHeaders },
+    headers: editHeadersFor(editToken),
     body: JSON.stringify({
       cardId,
       contentType: data.type,
@@ -299,10 +307,10 @@ async function uploadToS3(
   throw new Error('Upload failed')
 }
 
-async function submitCard(id: string, renderKey: string): Promise<Card> {
+async function submitCard(id: string, renderKey: string, editToken: string): Promise<Card> {
   const res = await fetch(api(`/cards/${id}/submit`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...writeHeaders },
+    headers: editHeadersFor(editToken),
     body: JSON.stringify({ renderKey }),
   })
 
@@ -385,6 +393,7 @@ function App() {
   const [rotation, setRotation] = useState<Rotation>(0)
   const [normalizedCrop, setNormalizedCrop] = useState<CropRect | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
+  const [editToken, setEditToken] = useState<string | null>(null)
   const [savedCard, setSavedCard] = useState<Card | null>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle')
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
@@ -491,20 +500,27 @@ function App() {
     return payload
   }
 
-  const ensureCardId = async (payload: SavePayload) => {
-    if (cardId) return cardId
+  const ensureCard = async (payload: SavePayload) => {
+    if (cardId && editToken) return { id: cardId, editToken }
+    if (cardId && !editToken) {
+      throw new Error('Edit token is missing. Please refresh and try again.')
+    }
 
     if (!payload.tournamentId || !payload.cardType) {
       throw new Error('Select a tournament and card type before saving')
     }
 
     const card = await createCard(payload)
+    if (!card.editToken) {
+      throw new Error('Edit token is missing. Please refresh and try again.')
+    }
     setCardId(card.id)
+    setEditToken(card.editToken)
     setSavedCard(card)
-    return card.id
+    return { id: card.id, editToken: card.editToken }
   }
 
-  const uploadOriginalPhoto = async (currentCardId: string) => {
+  const uploadOriginalPhoto = async (currentCardId: string, currentEditToken: string) => {
     if (!photo) {
       throw new Error('Please upload a photo before submitting')
     }
@@ -513,7 +529,7 @@ function App() {
     setUploadProgress({ kind: 'original', percent: 0 })
 
     try {
-      const presign = await requestPresignFor(currentCardId, photo.file, 'original')
+      const presign = await requestPresignFor(currentCardId, photo.file, 'original', currentEditToken)
       await uploadToS3(presign, photo.file, (percent) =>
         setUploadProgress({ kind: 'original', percent })
       )
@@ -536,13 +552,17 @@ function App() {
     }
   }
 
-  const uploadCroppedPhoto = async (currentCardId: string, imageUrl: string) => {
+  const uploadCroppedPhoto = async (
+    currentCardId: string,
+    imageUrl: string,
+    currentEditToken: string
+  ) => {
     if (!normalizedCrop) return null
 
     setUploadProgress({ kind: 'crop', percent: 0 })
     try {
       const cropBlob = await renderCropBlob({ imageUrl, crop: normalizedCrop })
-      const presign = await requestPresignFor(currentCardId, cropBlob, 'crop')
+      const presign = await requestPresignFor(currentCardId, cropBlob, 'crop', currentEditToken)
       await uploadToS3(presign, cropBlob, (percent) =>
         setUploadProgress({ kind: 'crop', percent })
       )
@@ -656,13 +676,13 @@ function App() {
       const payload = buildPayload()
 
       // Step 1: Create or get card ID
-      const currentCardId = await ensureCardId(payload)
+      const { id: currentCardId, editToken: currentEditToken } = await ensureCard(payload)
 
       // Step 2: Upload photo if we have a new one that hasn't been uploaded
       let photoPayload: SavePayload['photo'] = undefined
 
       if (photo && !uploadedPhoto) {
-        const uploaded = await uploadOriginalPhoto(currentCardId)
+        const uploaded = await uploadOriginalPhoto(currentCardId, currentEditToken)
         photoPayload = buildPhotoPayload(uploaded, normalizedCrop, uploadedCropKey)
       } else if (uploadedPhoto) {
         // Photo already uploaded, just update crop
@@ -677,11 +697,12 @@ function App() {
       }
 
       // Step 3: Update card with all data
-      const updatedCard = await updateCard(currentCardId, buildUpdatePayload(payload))
+      const updatedCard = await updateCard(currentCardId, buildUpdatePayload(payload), currentEditToken)
       return updatedCard
     },
     onSuccess: (data) => {
       setSavedCard(data)
+      if (data.editToken) setEditToken(data.editToken)
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -704,8 +725,8 @@ function App() {
       }
 
       const payload = buildPayload()
-      const currentCardId = await ensureCardId(payload)
-      const uploaded = uploadedPhoto ?? (photo ? await uploadOriginalPhoto(currentCardId) : null)
+      const { id: currentCardId, editToken: currentEditToken } = await ensureCard(payload)
+      const uploaded = uploadedPhoto ?? (photo ? await uploadOriginalPhoto(currentCardId, currentEditToken) : null)
 
       if (!uploaded) {
         throw new Error('Please upload a photo before submitting')
@@ -715,15 +736,19 @@ function App() {
         throw new Error('Please set a crop before submitting')
       }
 
-      const imageUrl = photo?.localUrl ?? media(uploaded.publicUrl)
-      const cropKey = uploadedCropKey ?? (await uploadCroppedPhoto(currentCardId, imageUrl))
+      const uploadedUrl = uploaded.publicUrl ? media(uploaded.publicUrl) : null
+      const imageUrl = photo?.localUrl ?? uploadedUrl
+      if (!imageUrl) {
+        throw new Error('Photo source is unavailable. Please re-upload your photo.')
+      }
+      const cropKey = uploadedCropKey ?? (await uploadCroppedPhoto(currentCardId, imageUrl, currentEditToken))
 
       const photoPayload = buildPhotoPayload(uploaded, normalizedCrop, cropKey)
       if (photoPayload) {
         payload.photo = photoPayload
       }
 
-      await updateCard(currentCardId, buildUpdatePayload(payload))
+      await updateCard(currentCardId, buildUpdatePayload(payload), currentEditToken)
 
       // Step 1: Render the card
       setSubmitStatus('rendering')
@@ -749,7 +774,7 @@ function App() {
 
       // Step 2: Upload rendered PNG
       setSubmitStatus('uploading')
-      const presign = await requestPresignFor(currentCardId, blob, 'render')
+      const presign = await requestPresignFor(currentCardId, blob, 'render', currentEditToken)
       setUploadProgress({ kind: 'render', percent: 0 })
       try {
         await uploadToS3(presign, blob, (percent) =>
@@ -763,16 +788,17 @@ function App() {
 
       // Step 3: Submit the card
       setSubmitStatus('submitting')
-      const submitted = await submitCard(currentCardId, presign.key)
+      const submitted = await submitCard(currentCardId, presign.key, currentEditToken)
 
       // Store the rendered card URL for display
-      setRenderedCardUrl(media(presign.publicUrl))
+      setRenderedCardUrl(assetUrlForKey(presign.key))
       setSubmitStatus('done')
 
       return submitted
     },
     onSuccess: (data) => {
       setSavedCard(data)
+      if (data.editToken) setEditToken(data.editToken)
     },
     onError: (err) => {
       setSubmitStatus('error')
@@ -995,6 +1021,7 @@ function App() {
 
   const resetSession = useCallback(() => {
     setCardId(null)
+    setEditToken(null)
     setSavedCard(null)
     setUploadedPhoto(null)
     setUploadedCropKey(null)
@@ -1051,7 +1078,8 @@ function App() {
   }, [form.cardType, form.firstName, form.lastName, form.title])
 
   // Use S3 URL if uploaded, otherwise local blob URL
-  const cropperImageUrl = photo?.localUrl ?? (uploadedPhoto ? media(uploadedPhoto.publicUrl) : null)
+  const uploadedCropperUrl = uploadedPhoto?.publicUrl ? media(uploadedPhoto.publicUrl) : null
+  const cropperImageUrl = photo?.localUrl ?? uploadedCropperUrl
 
   const buildCardForRender = useCallback(
     (timestamp: string): Card | null => {

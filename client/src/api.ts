@@ -15,7 +15,6 @@ export const media = (path: string) => `${MEDIA_BASE}${path}`
 export const writeHeaders: HeadersInit = {}
 
 export const publicPathForKey = (key: string) => {
-  if (key.startsWith('uploads/')) return `/u/${key.slice('uploads/'.length)}`
   if (key.startsWith('renders/')) return `/r/${key.slice('renders/'.length)}`
   if (key.startsWith('config/')) return `/c/${key.slice('config/'.length)}`
   return `/${key}`

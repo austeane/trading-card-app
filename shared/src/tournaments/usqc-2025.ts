@@ -20,7 +20,7 @@ export const USQC_2025_CONFIG: TournamentConfig = {
     {
       "id": "arizona-state",
       "name": "Arizona State University",
-      "logoKey": "config/tournaments/usqc-2025/teams/arizona-state.jpeg"
+      "logoKey": "config/tournaments/usqc-2025/teams/arizona-state.png"
     },
     {
       "id": "atlantic-dragons",
@@ -110,7 +110,7 @@ export const USQC_2025_CONFIG: TournamentConfig = {
     {
       "id": "connecticut",
       "name": "Connecticut Quadball",
-      "logoKey": "config/tournaments/usqc-2025/teams/connecticut.jpg"
+      "logoKey": "config/tournaments/usqc-2025/teams/connecticut.png"
     },
     {
       "id": "cwru",
@@ -225,7 +225,7 @@ export const USQC_2025_CONFIG: TournamentConfig = {
     {
       "id": "seattle-sirens",
       "name": "Seattle Sirens",
-      "logoKey": "config/tournaments/usqc-2025/teams/seattle-sirens.jpeg"
+      "logoKey": "config/tournaments/usqc-2025/teams/seattle-sirens.png"
     },
     {
       "id": "shsu",
@@ -245,12 +245,12 @@ export const USQC_2025_CONFIG: TournamentConfig = {
     {
       "id": "southwest-alliance",
       "name": "Southwest Alliance",
-      "logoKey": "config/tournaments/usqc-2025/teams/southwest-alliance.jpeg"
+      "logoKey": "config/tournaments/usqc-2025/teams/southwest-alliance.png"
     },
     {
-      "id": "texasa&m",
+      "id": "texas-am",
       "name": "Texas A&M Quadball",
-      "logoKey": "config/tournaments/usqc-2025/teams/texasa&m.png"
+      "logoKey": "config/tournaments/usqc-2025/teams/texas-am.png"
     },
     {
       "id": "texas-hill-country-heat",
