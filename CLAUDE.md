@@ -12,9 +12,8 @@ A sports trading card creation app. Users upload photos, crop them via drag-and-
 # Install dependencies
 pnpm install
 
-# Development (two terminals required)
-AWS_PROFILE=prod npx sst dev       # Terminal 1: SST infra + Lambda
-cd client && pnpm dev              # Terminal 2: Vite frontend
+# Development (single command runs everything)
+AWS_PROFILE=prod npx sst dev
 
 # Build
 pnpm build
@@ -37,16 +36,10 @@ Husky + lint-staged runs on every commit:
 
 ## Development Workflow
 
-**Run in two terminals:**
+**Single command runs everything (SST infra, Lambda, and Vite frontend):**
 
-Terminal 1 - SST (deploys infra, runs Lambda):
 ```bash
 AWS_PROFILE=prod npx sst dev
-```
-
-Terminal 2 - Vite (frontend dev server):
-```bash
-cd client && pnpm dev
 ```
 
 Access the app at `http://localhost:5173`.

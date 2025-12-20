@@ -23,7 +23,7 @@ import {
   USQC_2025_CONFIG,
   USQC_2025_TOURNAMENT,
 } from 'shared'
-import { renderCard } from './renderCard'
+import { renderPreviewSafeZone } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import CropGuides from './components/CropGuides'
@@ -394,6 +394,7 @@ function App() {
   const [rotation, setRotation] = useState<Rotation>(0)
   const [normalizedCrop, setNormalizedCrop] = useState<CropRect | null>(null)
   const [showGuides, setShowGuides] = useState(true)
+  const [showGuidesHelp, setShowGuidesHelp] = useState(false)
   const [cardId, setCardId] = useState<string | null>(null)
   const [editToken, setEditToken] = useState<string | null>(null)
   const [savedCard, setSavedCard] = useState<Card | null>(null)
@@ -1178,7 +1179,7 @@ function App() {
         const timestamp = new Date().toISOString()
         const card = buildCardForRender(timestamp)
         if (!card) return
-        const blob = await renderCard({
+        const blob = await renderPreviewSafeZone({
           card,
           config: tournamentConfig,
           imageUrl: cropperImageUrl,
@@ -1697,7 +1698,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="mt-4">
-                    <div className="flex aspect-[825/1125] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
+                    <div className="flex aspect-[675/975] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
                       {isSubmitInProgress ? (
                         <div className="flex flex-col items-center gap-3 text-emerald-200/70">
                           <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
@@ -1724,7 +1725,7 @@ function App() {
                 </div>
 
                 <div className="mt-5">
-                  <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/60 shadow-[0_20px_60px_rgba(3,7,18,0.6)]">
+                  <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-[28px] bg-slate-950/60 shadow-[0_20px_60px_rgba(3,7,18,0.6)]">
                     {cropperImageUrl ? (
                       <Cropper
                         image={cropperImageUrl}
@@ -1776,13 +1777,42 @@ function App() {
                   >
                     Reset
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowGuides((prev) => !prev)}
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                  >
-                    {showGuides ? 'Hide Guides' : 'Show Guides'}
-                  </button>
+                  <div className="relative flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowGuides((prev) => !prev)}
+                      className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                    >
+                      {showGuides ? 'Hide Guides' : 'Show Guides'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowGuidesHelp((prev) => !prev)}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 text-xs text-white/60 transition hover:border-white/40 hover:text-white"
+                      aria-label="About print guides"
+                    >
+                      ?
+                    </button>
+                    {showGuidesHelp && (
+                      <div className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-xl border border-white/10 bg-slate-900/95 p-3 text-xs shadow-xl backdrop-blur">
+                        <div className="mb-2 font-medium text-white">Print Guides</div>
+                        <ul className="space-y-1.5 text-slate-300">
+                          <li className="flex items-start gap-2">
+                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm border border-dashed border-sky-400" />
+                            <span><span className="text-sky-400">Blue</span> - Safe zone. Content here is guaranteed to print.</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm border border-rose-400" />
+                            <span><span className="text-rose-400">Red</span> - Trim line. Where the card will be cut.</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm bg-slate-600" />
+                            <span><span className="text-slate-400">Frame</span> - Bleed area. Extends beyond cut for full coverage.</span>
+                          </li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

@@ -29,12 +29,13 @@ body {
 }
 
 .cropper-container {
-  border-radius: 1.5rem;
+  border-radius: 28px;
 }
 
 .cropper-area {
   border: 1px solid rgba(255, 255, 255, 0.65);
   box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.7);
+  border-radius: 28px;
 }
 
 @keyframes celebrate-pop {

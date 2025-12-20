@@ -1,6 +1,7 @@
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
+  SAFE_BOX,
   findTemplate,
   resolveTemplateId,
   type Card,
@@ -348,8 +349,8 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
   ) {
     ctx.font = `bold 130px ${FONT_SANS}`
     ctx.fillStyle = theme.watermark
-    ctx.textAlign = 'right'
-    ctx.fillText(card.jerseyNumber, CARD_WIDTH - 50, 155)
+    ctx.textAlign = 'left'
+    ctx.fillText(card.jerseyNumber, 50, 155)
   }
 
   if (card.cardType === 'rare') {
@@ -415,6 +416,57 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob)
+        } else {
+          reject(new Error('Failed to create blob'))
+        }
+      },
+      'image/png',
+      1.0
+    )
+  })
+}
+
+/**
+ * Renders the card and crops to safe zone only (for preview).
+ * Returns a 675x975 image showing only the guaranteed print area.
+ */
+export async function renderPreviewSafeZone(input: RenderCardInput): Promise<Blob> {
+  // Render the full card first
+  const fullBlob = await renderCard(input)
+
+  // Load the full render as an image
+  const fullUrl = URL.createObjectURL(fullBlob)
+  const fullImg = await loadImage(fullUrl)
+  URL.revokeObjectURL(fullUrl)
+
+  // Create a new canvas at safe zone dimensions
+  const safeCanvas = document.createElement('canvas')
+  safeCanvas.width = SAFE_BOX.w
+  safeCanvas.height = SAFE_BOX.h
+  const ctx = safeCanvas.getContext('2d')
+
+  if (!ctx) {
+    throw new Error('Could not get canvas context')
+  }
+
+  // Draw only the safe zone portion
+  ctx.drawImage(
+    fullImg,
+    SAFE_BOX.x,
+    SAFE_BOX.y,
+    SAFE_BOX.w,
+    SAFE_BOX.h,
+    0,
+    0,
+    SAFE_BOX.w,
+    SAFE_BOX.h
+  )
+
+  return new Promise((resolve, reject) => {
+    safeCanvas.toBlob(
       (blob) => {
         if (blob) {
           resolve(blob)
