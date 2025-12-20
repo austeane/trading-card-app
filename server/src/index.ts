@@ -896,6 +896,7 @@ app.post('/admin/tournaments/:id/assets/presign', async (c) => {
     key = `config/tournaments/${id}/logos/org.${ext}`
   } else if (kind === 'teamLogo') {
     if (!teamId) return badRequest(c, 'teamId is required')
+    if (!isSafeId(teamId)) return badRequest(c, 'teamId is invalid')
     key = `config/tournaments/${id}/teams/${teamId}.${ext}`
   } else if (kind === 'templateOverlay') {
     if (!templateId) return badRequest(c, 'templateId is required')
@@ -954,7 +955,7 @@ app.post('/admin/tournaments/:id/publish', async (c) => {
 })
 
 // Export tournament bundle as ZIP
-// Contains: config.json, tournament-logo.png, org-logo.png, teams/<team-id>.png
+// Contains: config.json, tournament-logo.png, org-logo.png, teams/<team-id>.png, overlays/<template-id>.png
 app.get('/admin/tournaments/:id/bundle', async (c) => {
   const id = c.req.param('id')
 
@@ -1006,6 +1007,16 @@ app.get('/admin/tournaments/:id/bundle', async (c) => {
   )
   await Promise.all(teamPromises)
 
+  // Add template overlays
+  if (config.templates) {
+    const overlayPromises = config.templates
+      .filter((template) => template.overlayKey)
+      .map((template) =>
+        addAsset(template.overlayKey!, `overlays/${template.id}.png`)
+      )
+    await Promise.all(overlayPromises)
+  }
+
   const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' })
 
   return new Response(zipBuffer, {
@@ -1017,7 +1028,7 @@ app.get('/admin/tournaments/:id/bundle', async (c) => {
 })
 
 // Import tournament bundle from ZIP
-// Expected structure: config.json (required), tournament-logo.png, org-logo.png, teams/<team-id>.png
+// Expected structure: config.json (required), tournament-logo.png, org-logo.png, teams/<team-id>.png, overlays/<template-id>.png
 app.post('/admin/tournaments/import-bundle', async (c) => {
   const arrayBuffer = await c.req.arrayBuffer()
   if (arrayBuffer.byteLength === 0) {
@@ -1081,6 +1092,19 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
     ...team,
     logoKey: `config/tournaments/${id}/teams/${team.id}.png`,
   }))
+
+  // Update template overlay keys to match tournament structure
+  if (config.templates) {
+    config.templates = config.templates.map((template) => {
+      if (!template.overlayKey) return template
+      // Generate new overlay key for this tournament
+      const uploadId = randomUUID().slice(0, 8)
+      return {
+        ...template,
+        overlayKey: `config/tournaments/${id}/overlays/${template.id}/${uploadId}.png`,
+      }
+    })
+  }
 
   config.updatedAt = now
   config.createdAt = config.createdAt ?? now
@@ -1164,6 +1188,47 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
       )
     })
     await Promise.all(teamPromises)
+  }
+
+  // Upload template overlays from overlays/ folder
+  const overlaysFolder = zip.folder('overlays')
+  if (overlaysFolder && config.templates) {
+    const overlayPromises: Promise<void>[] = []
+    overlaysFolder.forEach((relativePath, file) => {
+      if (file.dir || !relativePath.toLowerCase().endsWith('.png')) return
+
+      const filename = relativePath.split('/').pop() ?? relativePath
+      if (!filename.toLowerCase().endsWith('.png')) return
+
+      const templateId = filename.slice(0, -4)
+      if (!isSafeId(templateId)) {
+        results.assetsSkipped.push(`overlays/${filename} (invalid template id)`)
+        return
+      }
+
+      // Find the template and get its updated overlayKey
+      const template = config.templates?.find((t) => t.id === templateId)
+      if (!template || !template.overlayKey) {
+        results.assetsSkipped.push(`overlays/${filename} (no matching template)`)
+        return
+      }
+
+      overlayPromises.push(
+        (async () => {
+          const data = await file.async('nodebuffer')
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: Resource.Media.name,
+              Key: template.overlayKey!,
+              Body: data,
+              ContentType: 'image/png',
+            })
+          )
+          results.assetsUploaded.push(`overlays/${templateId}.png`)
+        })()
+      )
+    })
+    await Promise.all(overlayPromises)
   }
 
   // Update tournament list
@@ -1668,6 +1733,25 @@ app.post('/cards/:id/submit', async (c) => {
   const submitValidationError = getSubmitValidationError(card)
   if (submitValidationError) {
     return badRequest(c, submitValidationError)
+  }
+
+  // Verify photo.originalKey actually exists in S3
+  const originalKey = card.photo?.originalKey
+  if (originalKey) {
+    try {
+      const head = await s3.send(
+        new HeadObjectCommand({
+          Bucket: Resource.Media.name,
+          Key: originalKey,
+        })
+      )
+      const ct = (head.ContentType ?? '').toLowerCase()
+      if (!ALLOWED_UPLOAD_TYPES.has(ct)) {
+        return badRequest(c, 'photo.originalKey is not a supported image type')
+      }
+    } catch {
+      return badRequest(c, 'photo.originalKey not found in storage')
+    }
   }
 
   if (renderKey) {
