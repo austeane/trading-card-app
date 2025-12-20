@@ -23,7 +23,7 @@ import {
   USQC_2025_CONFIG,
   USQC_2025_TOURNAMENT,
 } from 'shared'
-import { renderCard } from './renderCard'
+import { renderPreviewSafeZone } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import CropGuides from './components/CropGuides'
@@ -1179,7 +1179,7 @@ function App() {
         const timestamp = new Date().toISOString()
         const card = buildCardForRender(timestamp)
         if (!card) return
-        const blob = await renderCard({
+        const blob = await renderPreviewSafeZone({
           card,
           config: tournamentConfig,
           imageUrl: cropperImageUrl,
