@@ -10,7 +10,7 @@ A web application for creating custom sports trading cards. Upload a photo, crop
 - **Drag-and-drop image cropping** - Frame the perfect shot with intuitive controls
 - **Live preview** - See your card come together in real-time
 - **Client-side rendering** - High-quality 825x1125 PNG generation in the browser
-- **Auto-save drafts** - Never lose your work
+- **Save drafts** - Continue work before submitting
 - **Serverless architecture** - Scales automatically with AWS Lambda
 
 ## Tech Stack
@@ -28,9 +28,9 @@ A web application for creating custom sports trading cards. Upload a photo, crop
 ┌─────────────────────────────────────────────────────────────────┐
 │                        CloudFront Router                         │
 ├──────────────┬───────────────────────┬──────────────────────────┤
-│   /*         │   /api/*              │   /u/* & /r/*            │
+│   /*         │   /api/*              │   /r/* & /c/*            │
 │   Static     │   Lambda API          │   S3 Media               │
-│   (React)    │   (Hono)              │   (uploads/renders)      │
+│   (React)    │   (Hono)              │   (renders/config)       │
 └──────────────┴───────────────────────┴──────────────────────────┘
                            │
                            ▼

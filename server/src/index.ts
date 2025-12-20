@@ -6,7 +6,7 @@ import { text as streamToText } from 'node:stream/consumers'
 import JSZip from 'jszip'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import type { ApiResponse, Card, CardStatus, CardType, CropRect, TournamentConfig, TournamentListEntry } from 'shared'
@@ -451,13 +451,14 @@ const readJsonFromS3 = async <T>(key: string): Promise<T | null> => {
   }
 }
 
-const writeJsonToS3 = async (key: string, value: unknown) => {
+const writeJsonToS3 = async (key: string, value: unknown, options?: { cacheControl?: string }) => {
   await s3.send(
     new PutObjectCommand({
       Bucket: Resource.Media.name,
       Key: key,
       Body: JSON.stringify(value, null, 2),
       ContentType: 'application/json',
+      CacheControl: options?.cacheControl ?? 'no-store',
     })
   )
 }
@@ -655,7 +656,7 @@ app.post('/admin/tournaments', async (c) => {
   const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
   const nextList = list.filter((entry) => entry.id !== id)
   nextList.push({ id, name, year: Math.floor(year), published: false })
-  await writeJsonToS3(CONFIG_LIST_KEY, nextList)
+  await writeJsonToS3(CONFIG_LIST_KEY, nextList, { cacheControl: 'public, max-age=60' })
 
   return c.json(baseConfig, 201)
 })
@@ -847,19 +848,14 @@ app.post('/admin/tournaments/:id/publish', async (c) => {
     return c.json({ error: 'Draft config not found' }, 404)
   }
 
-  await s3.send(
-    new CopyObjectCommand({
-      Bucket: Resource.Media.name,
-      CopySource: `${Resource.Media.name}/${draftKey}`,
-      Key: publishedKey,
-    })
-  )
+  // Write published config with short cache (allows CloudFront to cache but still refreshes)
+  await writeJsonToS3(publishedKey, draft, { cacheControl: 'public, max-age=60' })
 
   const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
   const nextList = list.map((entry) =>
     entry.id === id ? { ...entry, published: true } : entry
   )
-  await writeJsonToS3(CONFIG_LIST_KEY, nextList)
+  await writeJsonToS3(CONFIG_LIST_KEY, nextList, { cacheControl: 'public, max-age=60' })
 
   return c.json({ success: true })
 })
@@ -1082,7 +1078,7 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
   const existing = list.find((entry) => entry.id === id)
   if (!existing) {
     list.push({ id, name: config.name, year: config.year, published: false })
-    await writeJsonToS3(CONFIG_LIST_KEY, list)
+    await writeJsonToS3(CONFIG_LIST_KEY, list, { cacheControl: 'public, max-age=60' })
   }
 
   // Re-save config with potentially updated orgLogoKey
@@ -1419,7 +1415,11 @@ app.patch('/cards/:id', async (c) => {
           if (photoKeyError) {
             error = photoKeyError
           } else {
-            pushSet(draft, 'photo', photoUpdate)
+            // Update individual photo fields to preserve existing data
+            // (avoids wiping out other photo fields when only updating e.g. crop)
+            for (const [key, value] of Object.entries(photoUpdate)) {
+              pushSet(draft, `photo.${key}`, value)
+            }
           }
         }
       }

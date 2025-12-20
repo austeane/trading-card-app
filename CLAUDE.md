@@ -54,7 +54,7 @@ Access the app at `http://localhost:5173`.
 **Environment variables:** `client/.env.development` contains `VITE_API_URL` and `VITE_ROUTER_URL`. Update these if SST outputs change (new stage, redeployed Lambda).
 
 **URL routing:**
-- **Production:** Same-origin via CloudFront Router (`/api/*`, `/u/*`, `/r/*`)
+- **Production:** Same-origin via CloudFront Router (`/api/*`, `/r/*`, `/c/*`)
 - **Dev:** Frontend calls Lambda URL directly (CORS enabled), media via Router
 
 ## Architecture
@@ -78,8 +78,8 @@ Access the app at `http://localhost:5173`.
 - `Api` - Lambda function running Hono
 - `CardRouter` - CloudFront router with routes:
   - `/api/*` → Lambda API
-  - `/u/*` → S3 uploads
   - `/r/*` → S3 renders
+  - `/c/*` → S3 config
 
 ### API Routes (server/src/index.ts)
 

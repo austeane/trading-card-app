@@ -24,6 +24,7 @@ import {
 } from 'shared'
 import { renderCard, renderCropBlob } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
+import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 
 const ALLOWED_UPLOAD_TYPES: Set<string> = new Set(ALLOWED_UPLOAD_TYPES_LIST)
 const MAX_UPLOAD_RETRIES = 1
@@ -405,6 +406,7 @@ function App() {
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'rendering' | 'uploading' | 'submitting' | 'done' | 'error'>('idle')
   const [hasEdited, setHasEdited] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [pendingDraft, setPendingDraft] = useState<SavedDraft | null>(null)
 
   const helloQuery = useQuery({
     queryKey: ['hello'],
@@ -423,6 +425,14 @@ function App() {
       setSelectedTournamentId(tournamentsQuery.data[0].id)
     }
   }, [selectedTournamentId, tournamentsQuery.data])
+
+  // Check for existing draft on mount
+  useEffect(() => {
+    const draft = loadDraft()
+    if (draft) {
+      setPendingDraft(draft)
+    }
+  }, [])
 
   const tournamentQuery = useQuery({
     queryKey: ['tournament', form.tournamentId],
@@ -517,6 +527,27 @@ function App() {
     setCardId(card.id)
     setEditToken(card.editToken)
     setSavedCard(card)
+
+    // Persist draft to localStorage for resume on refresh
+    saveDraft({
+      cardId: card.id,
+      editToken: card.editToken,
+      tournamentId: payload.tournamentId,
+      cardType: payload.cardType,
+      form: {
+        teamId: form.teamId,
+        position: form.position,
+        jerseyNumber: form.jerseyNumber,
+        firstName: form.firstName,
+        lastName: form.lastName,
+        title: form.title,
+        caption: form.caption,
+        photographer: form.photographer,
+        templateId: form.templateId,
+      },
+      savedAt: new Date().toISOString(),
+    })
+
     return { id: card.id, editToken: card.editToken }
   }
 
@@ -703,6 +734,28 @@ function App() {
     onSuccess: (data) => {
       setSavedCard(data)
       if (data.editToken) setEditToken(data.editToken)
+
+      // Update draft in localStorage with latest form data
+      if (data.id && data.editToken && form.tournamentId && form.cardType) {
+        saveDraft({
+          cardId: data.id,
+          editToken: data.editToken,
+          tournamentId: form.tournamentId,
+          cardType: form.cardType,
+          form: {
+            teamId: form.teamId,
+            position: form.position,
+            jerseyNumber: form.jerseyNumber,
+            firstName: form.firstName,
+            lastName: form.lastName,
+            title: form.title,
+            caption: form.caption,
+            photographer: form.photographer,
+            templateId: form.templateId,
+          },
+          savedAt: new Date().toISOString(),
+        })
+      }
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -799,6 +852,8 @@ function App() {
     onSuccess: (data) => {
       setSavedCard(data)
       if (data.editToken) setEditToken(data.editToken)
+      // Clear draft from localStorage after successful submit
+      clearDraft()
     },
     onError: (err) => {
       setSubmitStatus('error')
@@ -907,6 +962,30 @@ function App() {
       }
     })
   }
+
+  const handleResumeDraft = useCallback(() => {
+    if (!pendingDraft) return
+
+    // Restore card identifiers
+    setCardId(pendingDraft.cardId)
+    setEditToken(pendingDraft.editToken)
+
+    // Restore form data
+    setForm({
+      tournamentId: pendingDraft.tournamentId,
+      cardType: pendingDraft.cardType as CardType | '',
+      ...pendingDraft.form,
+    })
+    setSelectedTournamentId(pendingDraft.tournamentId)
+
+    // Close the modal
+    setPendingDraft(null)
+  }, [pendingDraft])
+
+  const handleDismissDraft = useCallback(() => {
+    clearDraft()
+    setPendingDraft(null)
+  }, [])
 
   const handleFileSelect = useCallback(async (file: File) => {
     setHasEdited(true)
@@ -1168,6 +1247,36 @@ function App() {
 
   return (
     <div className="app-shell min-h-screen">
+      {/* Resume Draft Modal */}
+      {pendingDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-white">Resume your draft?</h2>
+            <p className="mt-2 text-sm text-slate-300">
+              You have an unsaved draft from {new Date(pendingDraft.savedAt).toLocaleString()}.
+              Would you like to continue where you left off?
+            </p>
+            <p className="mt-2 text-xs text-slate-400">
+              Note: You&apos;ll need to re-upload your photo.
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={handleResumeDraft}
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                Resume Draft
+              </button>
+              <button
+                onClick={handleDismissDraft}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10"
+              >
+                Start Fresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-12">
         <header className="flex flex-col gap-4">
           <p className="text-xs uppercase tracking-[0.3em] text-slate-400">

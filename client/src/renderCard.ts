@@ -22,9 +22,9 @@ const THEMES: Record<string, Theme> = {
     gradientEnd: 'rgba(15, 23, 42, 0.85)',
     border: 'rgba(255, 255, 255, 0.1)',
     accent: 'rgba(255, 255, 255, 0.5)',
-    label: 'rgba(255, 255, 255, 0.65)',
+    label: '#ffffff',
     nameColor: '#ffffff',
-    meta: 'rgba(255, 255, 255, 0.8)',
+    meta: '#ffffff',
     watermark: 'rgba(255, 255, 255, 0.12)',
   },
   noir: {
@@ -33,9 +33,9 @@ const THEMES: Record<string, Theme> = {
     gradientEnd: 'rgba(10, 10, 15, 0.92)',
     border: 'rgba(255, 255, 255, 0.18)',
     accent: 'rgba(255, 255, 255, 0.7)',
-    label: 'rgba(255, 255, 255, 0.72)',
-    nameColor: '#f8fafc',
-    meta: 'rgba(248, 250, 252, 0.85)',
+    label: '#ffffff',
+    nameColor: '#ffffff',
+    meta: '#ffffff',
     watermark: 'rgba(248, 250, 252, 0.2)',
   },
 }
@@ -98,15 +98,34 @@ function drawCroppedImage(
   ctx.restore()
 }
 
+function drawOutlinedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  strokeWidth = 3
+) {
+  ctx.strokeStyle = 'black'
+  ctx.lineWidth = strokeWidth
+  ctx.lineJoin = 'round'
+  ctx.strokeText(text, x, y)
+  ctx.fillText(text, x, y)
+}
+
 function fillTextWithLetterSpacing(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number,
   y: number,
-  spacingPx: number
+  spacingPx: number,
+  strokeWidth = 2
 ) {
+  ctx.strokeStyle = 'black'
+  ctx.lineWidth = strokeWidth
+  ctx.lineJoin = 'round'
   let cursor = x
   for (const ch of text) {
+    ctx.strokeText(ch, cursor, y)
     ctx.fillText(ch, cursor, y)
     cursor += ctx.measureText(ch).width + spacingPx
   }
@@ -279,12 +298,12 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
     ctx.font = `bold ${titleSize}px ${FONT_DISPLAY}`
     ctx.fillStyle = theme.nameColor
     ctx.textAlign = 'center'
-    ctx.fillText(title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5)
+    drawOutlinedText(ctx, title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5, 4)
 
     if (caption) {
       ctx.font = `20px ${FONT_SANS}`
       ctx.fillStyle = theme.meta
-      ctx.fillText(caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30)
+      drawOutlinedText(ctx, caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30, 2)
     }
   } else {
     const fullName = [card.firstName, card.lastName].filter(Boolean).join(' ').trim()
@@ -293,17 +312,17 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
     ctx.fillStyle = theme.nameColor
     ctx.textAlign = 'left'
     ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
-    ctx.fillText(nameText, 50, CARD_HEIGHT - 180)
+    drawOutlinedText(ctx, nameText, 50, CARD_HEIGHT - 180, 4)
 
     const positionTeam = [card.position, team?.name].filter(Boolean).join(' / ')
     ctx.font = `28px ${FONT_SANS}`
     ctx.fillStyle = theme.meta
-    ctx.fillText(positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130)
+    drawOutlinedText(ctx, positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130, 2)
 
     if (cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
       ctx.font = `bold 36px ${FONT_SANS}`
       ctx.fillStyle = theme.meta
-      ctx.fillText(`#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80)
+      drawOutlinedText(ctx, `#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80, 3)
     }
   }
 
@@ -311,7 +330,7 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
     ctx.font = `18px ${FONT_SANS}`
     ctx.fillStyle = theme.label
     ctx.textAlign = 'right'
-    ctx.fillText(`Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40)
+    drawOutlinedText(ctx, `Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40, 2)
   }
 
   return new Promise((resolve, reject) => {

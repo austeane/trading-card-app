@@ -61,7 +61,7 @@ export default $config({
         cors: {
           allowOrigins: ["*"],
           allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-          allowHeaders: ["Content-Type", "Authorization"],
+          allowHeaders: ["Content-Type", "Authorization", "X-Edit-Token"],
         },
       },
       link: [mediaBucket, cardsTable, adminPassword],
