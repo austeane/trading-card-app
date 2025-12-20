@@ -23,7 +23,7 @@ import {
   USQC_2025_CONFIG,
   USQC_2025_TOURNAMENT,
 } from 'shared'
-import { renderPreviewSafeZone } from './renderCard'
+import { renderCard } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import CropGuides from './components/CropGuides'
@@ -1179,7 +1179,7 @@ function App() {
         const timestamp = new Date().toISOString()
         const card = buildCardForRender(timestamp)
         if (!card) return
-        const blob = await renderPreviewSafeZone({
+        const blob = await renderCard({
           card,
           config: tournamentConfig,
           imageUrl: cropperImageUrl,
@@ -1698,7 +1698,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="mt-4">
-                    <div className="flex aspect-[675/975] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
+                    <div className="flex aspect-[825/1125] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
                       {isSubmitInProgress ? (
                         <div className="flex flex-col items-center gap-3 text-emerald-200/70">
                           <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
