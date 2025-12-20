@@ -30,7 +30,7 @@ const app = new Hono()
 // Note: CORS is handled by Lambda Function URL configuration, not Hono middleware
 
 const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX = 60
+const RATE_LIMIT_MAX = 180
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 const adminAuthFailures = new Map<string, { count: number; resetAt: number }>()
 
@@ -55,7 +55,7 @@ const CONFIG_PREFIX = 'config/tournaments'
 const MAX_TEMPLATE_LENGTH = 32
 const EDIT_TOKEN_HEADER = 'x-edit-token'
 const ADMIN_AUTH_WINDOW_MS = 10 * 60_000
-const ADMIN_AUTH_MAX_FAILURES = 8
+const ADMIN_AUTH_MAX_FAILURES = 24
 
 const CARD_TYPES: CardType[] = [
   'player',
