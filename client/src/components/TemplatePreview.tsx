@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CARD_ASPECT, type Card, type CardType, type TournamentConfig } from 'shared'
-import { renderCard } from '../renderCard'
+import { CARD_ASPECT, TRIM_ASPECT, type Card, type CardType, type TournamentConfig } from 'shared'
+import { renderCard, renderPreviewTrim } from '../renderCard'
 import { assetUrlForKey } from '../api'
+import CropGuides from './CropGuides'
+
+type ViewMode = 'trim' | 'bleed'
 
 const PREVIEW_IMAGE_URL = (() => {
   const svg = `
@@ -84,6 +87,7 @@ export default function TemplatePreview({ config, templateId, templateLabel }: T
     [config.cardTypes]
   )
   const [cardType, setCardType] = useState<CardType>(enabledCardTypes[0] ?? 'player')
+  const [viewMode, setViewMode] = useState<ViewMode>('trim')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -100,13 +104,16 @@ export default function TemplatePreview({ config, templateId, templateLabel }: T
     const run = async () => {
       try {
         const card = buildSampleCard(config, cardType, templateId)
-        const blob = await renderCard({
+        const renderInput = {
           card,
           config,
           imageUrl: PREVIEW_IMAGE_URL,
           resolveAssetUrl: assetUrlForKey,
           templateId,
-        })
+        }
+        const blob = viewMode === 'bleed'
+          ? await renderCard(renderInput)
+          : await renderPreviewTrim(renderInput)
         if (cancelled) return
         const url = URL.createObjectURL(blob)
         setPreviewUrl((prev) => {
@@ -126,7 +133,9 @@ export default function TemplatePreview({ config, templateId, templateLabel }: T
     return () => {
       cancelled = true
     }
-  }, [cardType, config, templateId])
+  }, [cardType, config, templateId, viewMode])
+
+  const aspectRatio = viewMode === 'bleed' ? CARD_ASPECT : TRIM_ASPECT
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
@@ -155,22 +164,61 @@ export default function TemplatePreview({ config, templateId, templateLabel }: T
         </div>
       </div>
 
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setViewMode('trim')}
+          className={`rounded-full border px-3 py-1 text-[11px] ${
+            viewMode === 'trim'
+              ? 'border-sky-500/50 bg-sky-500/10 text-sky-200'
+              : 'border-white/10 text-slate-400'
+          }`}
+        >
+          Trim View
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('bleed')}
+          className={`rounded-full border px-3 py-1 text-[11px] ${
+            viewMode === 'bleed'
+              ? 'border-sky-500/50 bg-sky-500/10 text-sky-200'
+              : 'border-white/10 text-slate-400'
+          }`}
+        >
+          Full Bleed
+        </button>
+      </div>
+
       <div className="mt-4">
         {previewUrl ? (
-          <img
-            src={previewUrl}
-            alt="Template preview"
-            className="w-full rounded-2xl shadow-lg"
-            style={{ aspectRatio: `${CARD_ASPECT}` }}
-          />
+          <div
+            className="relative w-full overflow-hidden rounded-2xl shadow-lg"
+            style={{ aspectRatio: `${aspectRatio}` }}
+          >
+            <img
+              src={previewUrl}
+              alt="Template preview"
+              className="h-full w-full"
+            />
+            {viewMode === 'bleed' ? (
+              <CropGuides visible mode="both" basis="card" />
+            ) : (
+              <CropGuides visible mode="safe" basis="trim" />
+            )}
+          </div>
         ) : (
-          <div className="flex aspect-[825/1125] items-center justify-center rounded-2xl border border-dashed border-white/10 text-xs text-slate-500">
+          <div
+            className="flex items-center justify-center rounded-2xl border border-dashed border-white/10 text-xs text-slate-500"
+            style={{ aspectRatio: `${aspectRatio}` }}
+          >
             {error ?? 'Rendering preview...'}
           </div>
         )}
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        Preview uses sample data and a placeholder photo.
+        {viewMode === 'bleed'
+          ? 'Full bleed view shows trim (red) and safe (blue) zones.'
+          : 'Trim view shows what the cut card will look like. Safe zone (blue) marks guaranteed print area.'}
       </p>
     </div>
   )

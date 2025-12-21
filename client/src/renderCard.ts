@@ -1,7 +1,7 @@
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
-  SAFE_BOX,
+  TRIM_BOX,
   findTemplate,
   resolveTemplateId,
   type Card,
@@ -242,6 +242,160 @@ function getCardTypeConfig(card: Card, config: TournamentConfig) {
   return config.cardTypes.find((type) => type.type === card.cardType)
 }
 
+const DEFAULT_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 }
+
+async function renderCardFrame(
+  input: RenderCardInput,
+  ctx: CanvasRenderingContext2D,
+  crop: CropRect
+) {
+  const { card, config, imageUrl, resolveAssetUrl, templateId } = input
+  const { templateSnapshot } = resolveTemplateSnapshot({ card, config, templateId })
+  const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
+
+  if (document.fonts?.ready) {
+    await document.fonts.ready
+  }
+
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  const img = await loadImage(imageUrl)
+  drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+
+  if (flags.showGradient) {
+    const overlayGradient = ctx.createLinearGradient(0, CARD_HEIGHT - 350, 0, CARD_HEIGHT)
+    overlayGradient.addColorStop(0, theme.gradientStart)
+    overlayGradient.addColorStop(1, theme.gradientEnd)
+    ctx.fillStyle = overlayGradient
+    ctx.fillRect(0, CARD_HEIGHT - 350, CARD_WIDTH, 350)
+  }
+
+  if (flags.showBorders) {
+    // Position borders inside trim zone so they survive cutting and appear in previews
+    const borderOuterInset = TRIM_BOX.x + 2
+    const borderInnerInset = TRIM_BOX.x + 12
+
+    ctx.strokeStyle = theme.border
+    ctx.lineWidth = 2
+    ctx.strokeRect(
+      borderOuterInset,
+      borderOuterInset,
+      CARD_WIDTH - borderOuterInset * 2,
+      CARD_HEIGHT - borderOuterInset * 2
+    )
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(
+      borderInnerInset,
+      borderInnerInset,
+      CARD_WIDTH - borderInnerInset * 2,
+      CARD_HEIGHT - borderInnerInset * 2
+    )
+  }
+
+  const overlayImg = await loadOverlay(overlayKey, resolveAssetUrl)
+  if (overlayImg && overlayPlacement !== 'aboveText') {
+    if (overlayImg.naturalWidth !== CARD_WIDTH || overlayImg.naturalHeight !== CARD_HEIGHT) {
+      console.warn('Overlay is not 825x1125; scaling to fit.', overlayImg.naturalWidth, overlayImg.naturalHeight)
+    }
+    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+  }
+
+  const cardLabel = getCardTypeLabel(card, config).toUpperCase()
+  ctx.font = `13px ${FONT_SANS}`
+  ctx.fillStyle = theme.label
+  ctx.textAlign = 'left'
+  fillTextWithLetterSpacing(ctx, cardLabel, 50, 45, 2.5)
+
+  const cardTypeConfig = getCardTypeConfig(card, config)
+  const team = getTeamInfo(card, config)
+  const logoKey =
+    card.cardType === 'player' || card.cardType === 'team-staff'
+      ? team?.logoKey
+      : card.cardType === 'tournament-staff' || card.cardType === 'rare'
+        ? config.branding.tournamentLogoKey
+        : cardTypeConfig?.logoOverrideKey ?? config.branding.orgLogoKey
+
+  const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
+  if (logoImg) {
+    drawLogo(ctx, logoImg, CARD_WIDTH - 170, 40, 120, 80)
+  }
+
+  if (
+    flags.showWatermarkJersey &&
+    card.cardType !== 'rare' &&
+    cardTypeConfig?.showJerseyNumber &&
+    card.jerseyNumber
+  ) {
+    ctx.font = `bold 130px ${FONT_SANS}`
+    ctx.fillStyle = theme.watermark
+    ctx.textAlign = 'left'
+    ctx.fillText(card.jerseyNumber, 50, 155)
+  }
+
+  if (card.cardType === 'rare') {
+    const title = card.title ?? 'Rare Card'
+    const caption = card.caption ?? ''
+
+    ctx.strokeStyle = theme.accent
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(120, CARD_HEIGHT / 2 - 40)
+    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 - 40)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(120, CARD_HEIGHT / 2 + 40)
+    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 + 40)
+    ctx.stroke()
+
+    const titleSize = fitText(ctx, title, CARD_WIDTH - 200, 52, 28, FONT_DISPLAY)
+    ctx.font = `bold ${titleSize}px ${FONT_DISPLAY}`
+    ctx.fillStyle = theme.nameColor
+    ctx.textAlign = 'center'
+    drawOutlinedText(ctx, title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5, 4)
+
+    if (caption) {
+      ctx.font = `20px ${FONT_SANS}`
+      ctx.fillStyle = theme.meta
+      drawOutlinedText(ctx, caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30, 2)
+    }
+  } else {
+    const fullName = [card.firstName, card.lastName].filter(Boolean).join(' ').trim()
+    const nameText = fullName || 'Player Name'
+    const nameFontSize = fitText(ctx, nameText, CARD_WIDTH - 100, 56, 34, FONT_DISPLAY)
+    ctx.fillStyle = theme.nameColor
+    ctx.textAlign = 'left'
+    ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
+    drawOutlinedText(ctx, nameText, 50, CARD_HEIGHT - 180, 4)
+
+    const positionTeam = [card.position, team?.name].filter(Boolean).join(' / ')
+    ctx.font = `28px ${FONT_SANS}`
+    ctx.fillStyle = theme.meta
+    drawOutlinedText(ctx, positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130, 2)
+
+    if (cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
+      ctx.font = `bold 36px ${FONT_SANS}`
+      ctx.fillStyle = theme.meta
+      drawOutlinedText(ctx, `#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80, 3)
+    }
+  }
+
+  if (card.photographer) {
+    ctx.font = `18px ${FONT_SANS}`
+    ctx.fillStyle = theme.label
+    ctx.textAlign = 'right'
+    drawOutlinedText(ctx, `Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40, 2)
+  }
+
+  if (overlayImg && overlayPlacement === 'aboveText') {
+    if (overlayImg.naturalWidth !== CARD_WIDTH || overlayImg.naturalHeight !== CARD_HEIGHT) {
+      console.warn('Overlay is not 825x1125; scaling to fit.', overlayImg.naturalWidth, overlayImg.naturalHeight)
+    }
+    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+  }
+}
+
 export async function renderCropBlob(input: { imageUrl: string; crop: CropRect }): Promise<Blob> {
   const { imageUrl, crop } = input
   const img = await loadImage(imageUrl)
@@ -272,14 +426,6 @@ export async function renderCropBlob(input: { imageUrl: string; crop: CropRect }
 }
 
 export async function renderCard(input: RenderCardInput): Promise<Blob> {
-  const { card, config, imageUrl, resolveAssetUrl, templateId } = input
-  const { templateSnapshot } = resolveTemplateSnapshot({ card, config, templateId })
-  const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
-
-  if (document.fonts?.ready) {
-    await document.fonts.ready
-  }
-
   const canvas = document.createElement('canvas')
   canvas.width = CARD_WIDTH
   canvas.height = CARD_HEIGHT
@@ -289,130 +435,8 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
     throw new Error('Could not get canvas context')
   }
 
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-  const img = await loadImage(imageUrl)
-  const crop = card.photo?.crop ?? { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 }
-  drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-
-  if (flags.showGradient) {
-    const overlayGradient = ctx.createLinearGradient(0, CARD_HEIGHT - 350, 0, CARD_HEIGHT)
-    overlayGradient.addColorStop(0, theme.gradientStart)
-    overlayGradient.addColorStop(1, theme.gradientEnd)
-    ctx.fillStyle = overlayGradient
-    ctx.fillRect(0, CARD_HEIGHT - 350, CARD_WIDTH, 350)
-  }
-
-  if (flags.showBorders) {
-    ctx.strokeStyle = theme.border
-    ctx.lineWidth = 2
-    ctx.strokeRect(20, 20, CARD_WIDTH - 40, CARD_HEIGHT - 40)
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(30, 30, CARD_WIDTH - 60, CARD_HEIGHT - 60)
-  }
-
-  const overlayImg = await loadOverlay(overlayKey, resolveAssetUrl)
-  if (overlayImg && overlayPlacement !== 'aboveText') {
-    if (overlayImg.naturalWidth !== CARD_WIDTH || overlayImg.naturalHeight !== CARD_HEIGHT) {
-      console.warn('Overlay is not 825x1125; scaling to fit.', overlayImg.naturalWidth, overlayImg.naturalHeight)
-    }
-    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-  }
-
-  const cardLabel = getCardTypeLabel(card, config).toUpperCase()
-  ctx.font = `13px ${FONT_SANS}`
-  ctx.fillStyle = theme.label
-  ctx.textAlign = 'left'
-  fillTextWithLetterSpacing(ctx, cardLabel, 50, 45, 2.5)
-
-  const cardTypeConfig = getCardTypeConfig(card, config)
-  const team = getTeamInfo(card, config)
-  const logoKey =
-    card.cardType === 'player' || card.cardType === 'team-staff'
-      ? team?.logoKey
-      : card.cardType === 'tournament-staff' || card.cardType === 'rare'
-        ? config.branding.tournamentLogoKey
-        : cardTypeConfig?.logoOverrideKey ?? config.branding.orgLogoKey
-
-  const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
-  if (logoImg) {
-    drawLogo(ctx, logoImg, CARD_WIDTH - 170, 40, 120, 80)
-  }
-
-  if (
-    flags.showWatermarkJersey &&
-    card.cardType !== 'rare' &&
-    cardTypeConfig?.showJerseyNumber &&
-    card.jerseyNumber
-  ) {
-    ctx.font = `bold 130px ${FONT_SANS}`
-    ctx.fillStyle = theme.watermark
-    ctx.textAlign = 'left'
-    ctx.fillText(card.jerseyNumber, 50, 155)
-  }
-
-  if (card.cardType === 'rare') {
-    const title = card.title ?? 'Rare Card'
-    const caption = card.caption ?? ''
-
-    ctx.strokeStyle = theme.accent
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(120, CARD_HEIGHT / 2 - 40)
-    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 - 40)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(120, CARD_HEIGHT / 2 + 40)
-    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 + 40)
-    ctx.stroke()
-
-    const titleSize = fitText(ctx, title, CARD_WIDTH - 200, 52, 28, FONT_DISPLAY)
-    ctx.font = `bold ${titleSize}px ${FONT_DISPLAY}`
-    ctx.fillStyle = theme.nameColor
-    ctx.textAlign = 'center'
-    drawOutlinedText(ctx, title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5, 4)
-
-    if (caption) {
-      ctx.font = `20px ${FONT_SANS}`
-      ctx.fillStyle = theme.meta
-      drawOutlinedText(ctx, caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30, 2)
-    }
-  } else {
-    const fullName = [card.firstName, card.lastName].filter(Boolean).join(' ').trim()
-    const nameText = fullName || 'Player Name'
-    const nameFontSize = fitText(ctx, nameText, CARD_WIDTH - 100, 56, 34, FONT_DISPLAY)
-    ctx.fillStyle = theme.nameColor
-    ctx.textAlign = 'left'
-    ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
-    drawOutlinedText(ctx, nameText, 50, CARD_HEIGHT - 180, 4)
-
-    const positionTeam = [card.position, team?.name].filter(Boolean).join(' / ')
-    ctx.font = `28px ${FONT_SANS}`
-    ctx.fillStyle = theme.meta
-    drawOutlinedText(ctx, positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130, 2)
-
-    if (cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
-      ctx.font = `bold 36px ${FONT_SANS}`
-      ctx.fillStyle = theme.meta
-      drawOutlinedText(ctx, `#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80, 3)
-    }
-  }
-
-  if (card.photographer) {
-    ctx.font = `18px ${FONT_SANS}`
-    ctx.fillStyle = theme.label
-    ctx.textAlign = 'right'
-    drawOutlinedText(ctx, `Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40, 2)
-  }
-
-  if (overlayImg && overlayPlacement === 'aboveText') {
-    if (overlayImg.naturalWidth !== CARD_WIDTH || overlayImg.naturalHeight !== CARD_HEIGHT) {
-      console.warn('Overlay is not 825x1125; scaling to fit.', overlayImg.naturalWidth, overlayImg.naturalHeight)
-    }
-    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-  }
+  const crop = input.card.photo?.crop ?? DEFAULT_CROP
+  await renderCardFrame(input, ctx, crop)
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -430,169 +454,23 @@ export async function renderCard(input: RenderCardInput): Promise<Blob> {
 }
 
 /**
- * Renders a preview showing only the safe zone image content, scaled up,
- * with overlays rendered on top at normal positions.
- *
- * This gives users a preview of what the "guaranteed print area" will look like,
- * with the image zoomed to show only safe zone content but overlays intact.
+ * Renders a trim-aspect preview by cropping the full card render to the trim box.
  */
-export async function renderPreviewSafeZone(input: RenderCardInput): Promise<Blob> {
-  const { card, config, imageUrl, resolveAssetUrl, templateId } = input
-  const { templateSnapshot } = resolveTemplateSnapshot({ card, config, templateId })
-  const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
-
-  if (document.fonts?.ready) {
-    await document.fonts.ready
-  }
-
+export async function renderPreviewTrim(input: RenderCardInput): Promise<Blob> {
   const canvas = document.createElement('canvas')
-  canvas.width = CARD_WIDTH
-  canvas.height = CARD_HEIGHT
+  canvas.width = TRIM_BOX.w
+  canvas.height = TRIM_BOX.h
   const ctx = canvas.getContext('2d')
 
   if (!ctx) {
     throw new Error('Could not get canvas context')
   }
 
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-
-  // Load the source image
-  const img = await loadImage(imageUrl)
-  const baseCrop = card.photo?.crop ?? { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 }
-
-  // Calculate the safe zone portion of the crop
-  // Safe zone is inset by SAFE_BOX.x/CARD_WIDTH horizontally and SAFE_BOX.y/CARD_HEIGHT vertically
-  const safeXRatio = SAFE_BOX.x / CARD_WIDTH // ~0.0909
-  const safeYRatio = SAFE_BOX.y / CARD_HEIGHT // ~0.0667
-  const safeWRatio = SAFE_BOX.w / CARD_WIDTH // ~0.8182
-  const safeHRatio = SAFE_BOX.h / CARD_HEIGHT // ~0.8667
-
-  // Adjust crop to only include the safe zone portion of the image
-  const safeZoneCrop = {
-    x: baseCrop.x + baseCrop.w * safeXRatio,
-    y: baseCrop.y + baseCrop.h * safeYRatio,
-    w: baseCrop.w * safeWRatio,
-    h: baseCrop.h * safeHRatio,
-    rotateDeg: baseCrop.rotateDeg,
-  }
-
-  // Draw the safe zone portion of the image scaled to fill the entire canvas
-  drawCroppedImage(ctx, img, safeZoneCrop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-
-  // Now render all overlays exactly as in renderCard()
-  if (flags.showGradient) {
-    const overlayGradient = ctx.createLinearGradient(0, CARD_HEIGHT - 350, 0, CARD_HEIGHT)
-    overlayGradient.addColorStop(0, theme.gradientStart)
-    overlayGradient.addColorStop(1, theme.gradientEnd)
-    ctx.fillStyle = overlayGradient
-    ctx.fillRect(0, CARD_HEIGHT - 350, CARD_WIDTH, 350)
-  }
-
-  if (flags.showBorders) {
-    ctx.strokeStyle = theme.border
-    ctx.lineWidth = 2
-    ctx.strokeRect(20, 20, CARD_WIDTH - 40, CARD_HEIGHT - 40)
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(30, 30, CARD_WIDTH - 60, CARD_HEIGHT - 60)
-  }
-
-  const overlayImg = await loadOverlay(overlayKey, resolveAssetUrl)
-  if (overlayImg && overlayPlacement !== 'aboveText') {
-    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-  }
-
-  const cardLabel = getCardTypeLabel(card, config).toUpperCase()
-  ctx.font = `13px ${FONT_SANS}`
-  ctx.fillStyle = theme.label
-  ctx.textAlign = 'left'
-  fillTextWithLetterSpacing(ctx, cardLabel, 50, 45, 2.5)
-
-  const cardTypeConfig = getCardTypeConfig(card, config)
-  const team = getTeamInfo(card, config)
-  const logoKey =
-    card.cardType === 'player' || card.cardType === 'team-staff'
-      ? team?.logoKey
-      : card.cardType === 'tournament-staff' || card.cardType === 'rare'
-        ? config.branding.tournamentLogoKey
-        : cardTypeConfig?.logoOverrideKey ?? config.branding.orgLogoKey
-
-  const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
-  if (logoImg) {
-    drawLogo(ctx, logoImg, CARD_WIDTH - 170, 40, 120, 80)
-  }
-
-  if (
-    flags.showWatermarkJersey &&
-    card.cardType !== 'rare' &&
-    cardTypeConfig?.showJerseyNumber &&
-    card.jerseyNumber
-  ) {
-    ctx.font = `bold 130px ${FONT_SANS}`
-    ctx.fillStyle = theme.watermark
-    ctx.textAlign = 'left'
-    ctx.fillText(card.jerseyNumber, 50, 155)
-  }
-
-  if (card.cardType === 'rare') {
-    const title = card.title ?? 'Rare Card'
-    const caption = card.caption ?? ''
-
-    ctx.strokeStyle = theme.accent
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(120, CARD_HEIGHT / 2 - 40)
-    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 - 40)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(120, CARD_HEIGHT / 2 + 40)
-    ctx.lineTo(CARD_WIDTH - 120, CARD_HEIGHT / 2 + 40)
-    ctx.stroke()
-
-    const titleSize = fitText(ctx, title, CARD_WIDTH - 200, 52, 28, FONT_DISPLAY)
-    ctx.font = `bold ${titleSize}px ${FONT_DISPLAY}`
-    ctx.fillStyle = theme.nameColor
-    ctx.textAlign = 'center'
-    drawOutlinedText(ctx, title, CARD_WIDTH / 2, CARD_HEIGHT / 2 - 5, 4)
-
-    if (caption) {
-      ctx.font = `20px ${FONT_SANS}`
-      ctx.fillStyle = theme.meta
-      drawOutlinedText(ctx, caption, CARD_WIDTH / 2, CARD_HEIGHT / 2 + 30, 2)
-    }
-  } else {
-    const fullName = [card.firstName, card.lastName].filter(Boolean).join(' ').trim()
-    const nameText = fullName || 'Player Name'
-    const nameFontSize = fitText(ctx, nameText, CARD_WIDTH - 100, 56, 34, FONT_DISPLAY)
-    ctx.fillStyle = theme.nameColor
-    ctx.textAlign = 'left'
-    ctx.font = `bold ${nameFontSize}px ${FONT_DISPLAY}`
-    drawOutlinedText(ctx, nameText, 50, CARD_HEIGHT - 180, 4)
-
-    const positionTeam = [card.position, team?.name].filter(Boolean).join(' / ')
-    ctx.font = `28px ${FONT_SANS}`
-    ctx.fillStyle = theme.meta
-    drawOutlinedText(ctx, positionTeam || 'Position / Team', 50, CARD_HEIGHT - 130, 2)
-
-    if (cardTypeConfig?.showJerseyNumber && card.jerseyNumber) {
-      ctx.font = `bold 36px ${FONT_SANS}`
-      ctx.fillStyle = theme.meta
-      drawOutlinedText(ctx, `#${card.jerseyNumber}`, 50, CARD_HEIGHT - 80, 3)
-    }
-  }
-
-  if (card.photographer) {
-    ctx.font = `18px ${FONT_SANS}`
-    ctx.fillStyle = theme.label
-    ctx.textAlign = 'right'
-    drawOutlinedText(ctx, `Photo: ${card.photographer}`, CARD_WIDTH - 50, CARD_HEIGHT - 40, 2)
-  }
-
-  if (overlayImg && overlayPlacement === 'aboveText') {
-    ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-  }
+  const crop = input.card.photo?.crop ?? DEFAULT_CROP
+  ctx.save()
+  ctx.translate(-TRIM_BOX.x, -TRIM_BOX.y)
+  await renderCardFrame(input, ctx, crop)
+  ctx.restore()
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
