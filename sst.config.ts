@@ -90,6 +90,10 @@ export default $config({
         },
       },
       link: [mediaBucket, cardsTable, adminPassword],
+      environment: {
+        // Set to "true" to require admin password, "false" to disable auth
+        ADMIN_AUTH_ENABLED: "false",
+      },
     });
 
     router.route("/api", api.url, {

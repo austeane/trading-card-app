@@ -115,6 +115,19 @@ export default function Admin() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
 
+  // Check if admin auth is enabled on the server
+  const authConfigQuery = useQuery({
+    queryKey: ['admin-auth-config'],
+    queryFn: async () => {
+      const res = await fetch(api('/admin-config'))
+      if (!res.ok) throw new Error('Failed to fetch admin config')
+      return res.json() as Promise<{ authEnabled: boolean }>
+    },
+    staleTime: Infinity, // Auth config doesn't change during a session
+  })
+
+  const authEnabled = authConfigQuery.data?.authEnabled ?? true // Default to enabled if unknown
+
   // Save password to sessionStorage when it changes
   useEffect(() => {
     if (adminPassword) {
@@ -128,20 +141,32 @@ export default function Admin() {
     }
   }
 
-  // Auth headers for admin API calls
-  const adminHeaders = useMemo(() => ({
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${adminPassword}`,
-  }), [adminPassword])
+  // Auth headers for admin API calls (only include Authorization when auth is enabled)
+  const adminHeaders = useMemo(() => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (authEnabled && adminPassword) {
+      headers['Authorization'] = `Bearer ${adminPassword}`
+    }
+    return headers
+  }, [adminPassword, authEnabled])
+
+  // Helper for requests that only need auth header (no Content-Type)
+  const authOnlyHeaders = useMemo((): Record<string, string> => {
+    if (authEnabled && adminPassword) {
+      return { 'Authorization': `Bearer ${adminPassword}` }
+    }
+    return {}
+  }, [adminPassword, authEnabled])
 
   const tournamentsQuery = useQuery({
-    queryKey: ['admin-tournaments', adminPassword],
+    queryKey: ['admin-tournaments', adminPassword, authEnabled],
     queryFn: async () => {
       const res = await fetch(api('/admin/tournaments'), { headers: adminHeaders })
       if (!res.ok) throw new Error('Request failed')
       return res.json() as Promise<TournamentListEntry[]>
     },
-    enabled: Boolean(adminPassword),
+    // Run when auth is disabled OR when a password is provided
+    enabled: authConfigQuery.isSuccess && (!authEnabled || Boolean(adminPassword)),
   })
 
   useEffect(() => {
@@ -151,13 +176,13 @@ export default function Admin() {
   }, [activeTournamentId, tournamentsQuery.data])
 
   const configQuery = useQuery({
-    queryKey: ['admin-config', activeTournamentId, adminPassword],
+    queryKey: ['admin-config', activeTournamentId, adminPassword, authEnabled],
     queryFn: async () => {
       const res = await fetch(api(`/admin/tournaments/${activeTournamentId}`), { headers: adminHeaders })
       if (!res.ok) throw new Error('Request failed')
       return res.json() as Promise<TournamentConfig>
     },
-    enabled: Boolean(activeTournamentId) && Boolean(adminPassword),
+    enabled: Boolean(activeTournamentId) && (!authEnabled || Boolean(adminPassword)),
   })
 
   useEffect(() => {
@@ -215,7 +240,7 @@ export default function Admin() {
   }
 
   const cardsQuery = useQuery({
-    queryKey: ['admin-cards', statusFilter, activeTournamentId, adminPassword],
+    queryKey: ['admin-cards', statusFilter, activeTournamentId, adminPassword, authEnabled],
     queryFn: async () => {
       const params = new URLSearchParams({ status: statusFilter })
       if (activeTournamentId) params.set('tournamentId', activeTournamentId)
@@ -223,7 +248,7 @@ export default function Admin() {
       if (!res.ok) throw new Error('Request failed')
       return res.json() as Promise<Card[]>
     },
-    enabled: Boolean(adminPassword),
+    enabled: !authEnabled || Boolean(adminPassword),
   })
 
   const saveConfigMutation = useMutation({
@@ -268,7 +293,7 @@ export default function Admin() {
       if (!logosZipFile) throw new Error('Select a ZIP file')
       const res = await fetch(api(`/admin/tournaments/${activeTournamentId}/logos-zip`), {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${adminPassword}` },
+        headers: authOnlyHeaders,
         body: logosZipFile,
       })
       if (!res.ok) {
@@ -288,7 +313,7 @@ export default function Admin() {
       if (!bundleFile) throw new Error('Select a ZIP file')
       const res = await fetch(api('/admin/tournaments/import-bundle'), {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${adminPassword}` },
+        headers: authOnlyHeaders,
         body: bundleFile,
       })
       if (!res.ok) {
@@ -347,7 +372,7 @@ export default function Admin() {
       }
 
       const photoRes = await fetch(api(`/admin/cards/${card.id}/photo-url`), {
-        headers: { 'Authorization': `Bearer ${adminPassword}` },
+        headers: authOnlyHeaders,
       })
       if (!photoRes.ok) {
         const error = await photoRes.json().catch(() => ({}))
@@ -417,7 +442,7 @@ export default function Admin() {
     mutationFn: async (id: string) => {
       const res = await fetch(api(`/admin/cards/${id}`), {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${adminPassword}` },
+        headers: authOnlyHeaders,
       })
       if (!res.ok) {
         const error = await res.json().catch(() => ({}))
@@ -437,7 +462,7 @@ export default function Admin() {
         ids.map(async (id) => {
           const res = await fetch(api(`/admin/cards/${id}`), {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${adminPassword}` },
+            headers: authOnlyHeaders,
           })
           if (!res.ok) throw new Error('Delete failed')
           return id
@@ -453,8 +478,24 @@ export default function Admin() {
     },
   })
 
+  // Show loading state while checking auth config
+  if (authConfigQuery.isPending) {
+    return (
+      <div className="app-shell min-h-screen">
+        <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
+          <div className="w-full rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
+            <h1 className="font-display text-3xl text-white text-center">Admin Console</h1>
+            <p className="mt-2 text-sm text-slate-400 text-center">
+              Loading...
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Show loading state while verifying password
-  if (adminPassword && tournamentsQuery.isPending) {
+  if (authEnabled && adminPassword && tournamentsQuery.isPending) {
     return (
       <div className="app-shell min-h-screen">
         <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
@@ -469,8 +510,8 @@ export default function Admin() {
     )
   }
 
-  // Show login screen when no password entered
-  if (!adminPassword) {
+  // Show login screen when auth is enabled and no password entered
+  if (authEnabled && !adminPassword) {
     return (
       <div className="app-shell min-h-screen">
         <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
@@ -512,8 +553,8 @@ export default function Admin() {
     )
   }
 
-  // Show error state if password is wrong
-  if (tournamentsQuery.isError) {
+  // Show error state if password is wrong (only when auth is enabled)
+  if (authEnabled && tournamentsQuery.isError) {
     return (
       <div className="app-shell min-h-screen">
         <div className="mx-auto flex max-w-md flex-col items-center justify-center px-6 py-24">
@@ -578,22 +619,31 @@ export default function Admin() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Authenticated
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setAdminPassword('')
-                setPasswordInput('')
-                sessionStorage.removeItem('adminPassword')
-                queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
-              }}
-              className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 hover:bg-white/5"
-            >
-              Sign out
-            </button>
+            {authEnabled ? (
+              <>
+                <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  Authenticated
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminPassword('')
+                    setPasswordInput('')
+                    sessionStorage.removeItem('adminPassword')
+                    queryClient.invalidateQueries({ queryKey: ['admin-tournaments'] })
+                  }}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-400 hover:bg-white/5"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                Auth Disabled
+              </span>
+            )}
           </div>
         </header>
 
@@ -747,7 +797,7 @@ export default function Admin() {
                   type="button"
                   onClick={async () => {
                     const res = await fetch(api(`/admin/tournaments/${activeTournamentId}/bundle`), {
-                      headers: { 'Authorization': `Bearer ${adminPassword}` },
+                      headers: authOnlyHeaders,
                     })
                     if (!res.ok) return
                     const blob = await res.blob()
@@ -841,7 +891,7 @@ export default function Admin() {
 
                     // Use presigned download URL from API to avoid CORS issues
                     const res = await fetch(api(`/admin/cards/${card.id}/download-url`), {
-                      headers: { 'Authorization': `Bearer ${adminPassword}` },
+                      headers: authOnlyHeaders,
                     })
                     if (res.ok) {
                       const { url: downloadUrl } = await res.json()

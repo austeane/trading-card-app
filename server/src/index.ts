@@ -597,8 +597,17 @@ app.use('*', async (c, next) => {
   await next()
 })
 
+// Check if admin authentication is enabled via environment variable
+const isAdminAuthEnabled = () => process.env.ADMIN_AUTH_ENABLED === 'true'
+
 // Admin auth middleware - requires Bearer token matching AdminPassword secret
 const requireAdmin: MiddlewareHandler = async (c, next) => {
+  // Skip auth check if disabled via environment variable
+  if (!isAdminAuthEnabled()) {
+    await next()
+    return
+  }
+
   const auth = c.req.header('Authorization')
   const expected = `Bearer ${Resource.AdminPassword.value}`
   const ip = getClientIp(c)
@@ -643,6 +652,11 @@ app.get('/hello', (c) => {
   }
 
   return c.json(data, 200)
+})
+
+// Public endpoint to check if admin auth is required (for client to show/hide login form)
+app.get('/admin-config', (c) => {
+  return c.json({ authEnabled: isAdminAuthEnabled() })
 })
 
 app.get('/tournaments', async (c) => {
