@@ -13,6 +13,7 @@ import {
   MAX_TEAM_LENGTH,
   MAX_TITLE_LENGTH,
   MAX_UPLOAD_BYTES,
+  TRIM_ASPECT,
   resolveTemplateId,
   type ApiResponse,
   type Card,
@@ -23,7 +24,7 @@ import {
   USQC_2025_CONFIG,
   USQC_2025_TOURNAMENT,
 } from 'shared'
-import { renderPreviewSafeZone } from './renderCard'
+import { renderPreviewTrim } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import CropGuides from './components/CropGuides'
@@ -1179,7 +1180,7 @@ function App() {
         const timestamp = new Date().toISOString()
         const card = buildCardForRender(timestamp)
         if (!card) return
-        const blob = await renderPreviewSafeZone({
+        const blob = await renderPreviewTrim({
           card,
           config: tournamentConfig,
           imageUrl: cropperImageUrl,
@@ -1687,18 +1688,26 @@ function App() {
                   </>
                 ) : previewUrl ? (
                   <div className="mt-4">
-                    <img
-                      src={previewUrl}
-                      alt="Live preview trading card"
-                      className="w-full rounded-2xl shadow-lg"
-                    />
+                    <div
+                      className="w-full"
+                      style={{ aspectRatio: `${TRIM_ASPECT}` }}
+                    >
+                      <img
+                        src={previewUrl}
+                        alt="Live preview trading card"
+                        className="h-full w-full rounded-2xl shadow-lg"
+                      />
+                    </div>
                     <p className="mt-2 text-xs text-slate-400">
                       Preview updates as you edit. Submit to send for rendering.
                     </p>
                   </div>
                 ) : (
                   <div className="mt-4">
-                    <div className="flex aspect-[825/1125] w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70">
+                    <div
+                      className="flex w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70"
+                      style={{ aspectRatio: `${TRIM_ASPECT}` }}
+                    >
                       {isSubmitInProgress ? (
                         <div className="flex flex-col items-center gap-3 text-emerald-200/70">
                           <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
@@ -1748,7 +1757,7 @@ function App() {
                         Upload a photo to start cropping
                       </div>
                     )}
-                    <CropGuides visible={showGuides} />
+                    <CropGuides visible={showGuides} mode="trim" />
                   </div>
                   {hasEdited && validationErrors.crop ? (
                     <p className="mt-2 text-xs text-rose-300">{validationErrors.crop}</p>
