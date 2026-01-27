@@ -50,3 +50,4 @@ bun.lockb
 
 # generated
 repomix-output.xml
+.worktrees/
