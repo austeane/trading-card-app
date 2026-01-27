@@ -12,7 +12,7 @@ A sports trading card creation app. Users upload photos, crop them via drag-and-
 # Install dependencies
 pnpm install
 
-# Development (single command runs everything)
+# Development (backend only - see Development section for full workflow)
 AWS_PROFILE=prod npx sst dev
 
 # Build
@@ -23,10 +23,26 @@ pnpm type-check
 
 # Linting
 pnpm lint
-
-# Deploy to AWS
-AWS_PROFILE=prod npx sst deploy
 ```
+
+## Deployment
+
+This app uses a **hybrid deployment** via [austin-site](https://github.com/austeane/austin-site):
+- **Frontend**: Built and deployed from austin-site at https://www.austinwallace.ca/trading-cards
+- **Backend**: Deployed from this repo (Lambda, DynamoDB, S3)
+
+**Deploy backend** (from this repo):
+```bash
+AWS_PROFILE=prod npx sst deploy --stage production
+```
+
+**Deploy frontend** (from austin-site):
+```bash
+cd ~/dev/austin-site
+AWS_PROFILE=prod npx sst deploy --stage production
+```
+
+Both deployments are required for a fully functioning production app. Frontend changes require redeploying austin-site; backend changes require redeploying this repo.
 
 ## Pre-commit Hooks
 
@@ -36,15 +52,21 @@ Husky + lint-staged runs on every commit:
 
 ## Development Workflow
 
-**Single command runs everything (SST infra, Lambda, and Vite frontend):**
+Run two terminals from this repo:
 
+**Terminal 1 - Backend:**
 ```bash
 AWS_PROFILE=prod npx sst dev
 ```
 
-Access the app at `http://localhost:5173`.
+**Terminal 2 - Frontend:**
+```bash
+cd client && pnpm dev
+```
 
-**Environment variables:** `client/.env.development` contains `VITE_API_URL` and `VITE_ROUTER_URL`. Update these if SST outputs change (new stage, redeployed Lambda).
+Open http://localhost:5173. Both frontend and backend hot reload on save.
+
+**Note:** `client/.env.development` contains `VITE_API_URL` and `VITE_ROUTER_URL`. Update these if SST outputs change after redeployment.
 
 **URL routing:**
 - **Production:** Same-origin via CloudFront Router (`/api/*`, `/r/*`, `/c/*`)
