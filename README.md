@@ -106,7 +106,7 @@ This app uses a **hybrid deployment**:
 
 **Deploy backend only** (from this repo):
 ```bash
-AWS_PROFILE=prod npx sst deploy --stage austin
+AWS_PROFILE=prod npx sst deploy --stage production
 ```
 
 **Deploy frontend** (from austin-site repo):

@@ -85,7 +85,7 @@ export default $config({
       url: {
         cors: {
           allowOrigins: ["*"],
-          allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+          allowMethods: ["*"],
           allowHeaders: ["Content-Type", "Authorization", "X-Edit-Token"],
         },
       },
