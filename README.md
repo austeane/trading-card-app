@@ -1,5 +1,8 @@
 # Trading Card Studio
 
+> **Deployment Note**: The frontend is deployed via [austin-site](https://github.com/your/austin-site) at https://www.austinwallace.ca/trading-cards.
+> The backend (Lambda, DynamoDB, S3) remains deployed from this repo. See the [Deployment](#deployment) section below.
+
 A web application for creating custom sports trading cards. Upload a photo, crop it with drag-and-drop, add player details, and generate a high-quality PNG card ready for printing or sharing.
 
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
@@ -93,10 +96,26 @@ pnpm lint
 
 # Build all packages
 pnpm build
-
-# Deploy to AWS
-AWS_PROFILE=prod npx sst deploy
 ```
+
+### Deployment
+
+This app uses a **hybrid deployment**:
+- **Frontend**: Deployed via `austin-site` repo to https://www.austinwallace.ca/trading-cards
+- **Backend**: Deployed from this repo (Lambda, DynamoDB, S3)
+
+**Deploy backend only** (from this repo):
+```bash
+AWS_PROFILE=prod npx sst deploy --stage austin
+```
+
+**Deploy frontend** (from austin-site repo):
+```bash
+cd ~/dev/austin-site
+AWS_PROFILE=prod npx sst deploy --stage production
+```
+
+Both deployments are required for a fully functioning app.
 
 ## Project Structure
 

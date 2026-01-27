@@ -20,4 +20,7 @@ const adminRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([indexRoute, adminRoute])
 
-export const router = createRouter({ routeTree })
+// Support subpath deployments (e.g., /trading-cards on austinwallace.ca)
+const basePath = import.meta.env.VITE_BASE_PATH || ''
+
+export const router = createRouter({ routeTree, basepath: basePath })

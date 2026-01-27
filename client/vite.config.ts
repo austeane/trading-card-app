@@ -15,7 +15,12 @@ const sentryPlugin = sentryAuthToken
 
 // Note: No proxy config needed - access via SST Router URL when running `sst dev`
 // The Router handles /api/*, /u/*, and /r/* routing to Lambda and S3
+
+// Support subpath deployments via VITE_BASE_PATH env var (e.g., /trading-cards)
+const basePath = process.env.VITE_BASE_PATH || '/';
+
 export default defineConfig({
+	base: basePath,
 	plugins: [react(), tailwindcss(), ...(sentryPlugin ? [sentryPlugin] : [])],
 	build: {
 		sourcemap: Boolean(sentryAuthToken),

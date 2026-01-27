@@ -20,7 +20,7 @@
     "hono": "^4.10.8",
     "jszip": "^3.10.1",
     "shared": "workspace:*",
-    "sst": "3.17.25"
+    "sst": "3.17.38"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
