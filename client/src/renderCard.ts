@@ -318,12 +318,16 @@ function drawLogo(
 // Max width for name text before wrapping to second line
 const NAME_MAX_WIDTH = 550
 
+// Max width for rare card text (anchorX minus left frame edge minus some padding)
+const RARE_CARD_MAX_WIDTH = 754 - FRAME.innerX - 20  // ~678px
+
 // Helper to wrap text into lines that fit within maxWidth
 // Handles spaces, hyphens, and forces breaks on long single words
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
-  maxWidth: number
+  maxWidth: number,
+  maxLines: number = 2
 ): string[] {
   // First check if the entire text fits
   if (ctx.measureText(text).width <= maxWidth) {
@@ -360,23 +364,30 @@ function wrapText(
     lines.push(currentLine.trim())
   }
 
-  // If we still have a single line that's too long (no break points), force a character break
-  if (lines.length === 1 && ctx.measureText(lines[0]).width > maxWidth) {
-    const longText = lines[0]
-    let breakPoint = longText.length
-    for (let i = 1; i < longText.length; i++) {
-      if (ctx.measureText(longText.slice(0, i)).width > maxWidth) {
-        breakPoint = i - 1
-        break
+  // If we still have a single line that's too long (no break points), force character breaks
+  const result: string[] = []
+  for (const line of lines) {
+    if (ctx.measureText(line).width > maxWidth) {
+      // Force character breaks for this long line
+      let remaining = line
+      while (remaining && result.length < maxLines) {
+        let breakPoint = remaining.length
+        for (let i = 1; i < remaining.length; i++) {
+          if (ctx.measureText(remaining.slice(0, i)).width > maxWidth) {
+            breakPoint = Math.max(1, i - 1)
+            break
+          }
+        }
+        result.push(remaining.slice(0, breakPoint))
+        remaining = remaining.slice(breakPoint)
       }
+    } else {
+      result.push(line)
     }
-    if (breakPoint > 0 && breakPoint < longText.length) {
-      return [longText.slice(0, breakPoint), longText.slice(breakPoint)].slice(0, 2)
-    }
+    if (result.length >= maxLines) break
   }
 
-  // Limit to 2 lines max
-  return lines.slice(0, 2)
+  return result.slice(0, maxLines)
 }
 
 function drawAngledNameBoxes(
@@ -604,53 +615,129 @@ function drawRareCardContent(
   title: string,
   caption: string
 ) {
-  const { titleAnchorX, titleAnchorY, captionAnchorX, captionAnchorY, titleFontSize, captionFontSize, rotation } = USQC26_LAYOUT.rareCard
+  const { rotation } = USQC26_LAYOUT.rareCard
+  // Use name styling and positioning for consistent look
+  const {
+    lastNameSize,
+    firstNameSize,
+    lastNameBox,
+    firstNameBox,
+    anchorX,
+    leftPadding,
+    rightPadding,
+    boxExtension,
+    textYOffset,
+  } = USQC26_LAYOUT.name
   const radians = (rotation * Math.PI) / 180
+
+  // Use same text offsets as name boxes
+  const titleTextXOffset = 10   // Same as lnTextXOffset
+  const captionTextXOffset = 12 // Same as fnTextXOffset
 
   ctx.save()
 
-  // Draw title box and text
-  ctx.translate(titleAnchorX, titleAnchorY)
+  // Measure and wrap title text (allow many lines, constrain to frame width)
+  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
+  ctx.letterSpacing = '0px'
+  const titleLines = wrapText(ctx, title, RARE_CARD_MAX_WIDTH, 10)
+  const titleMaxWidth = Math.max(...titleLines.map(line => ctx.measureText(line).width))
+  const titleBoxWidth = titleMaxWidth + leftPadding + rightPadding + boxExtension
+  const titleLineHeight = lastNameSize * 1.1
+  const titleBoxHeight = lastNameBox.height + (titleLines.length - 1) * titleLineHeight
+
+  // Measure and wrap caption text (if caption exists, allow many lines)
+  let captionLines: string[] = []
+  let captionBoxWidth = 0
+  let captionLineHeight = 0
+  let captionBoxHeight = firstNameBox.height
+  if (caption) {
+    ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
+    captionLines = wrapText(ctx, caption, RARE_CARD_MAX_WIDTH, 10)
+    const captionMaxWidth = Math.max(...captionLines.map(line => ctx.measureText(line).width))
+    captionBoxWidth = captionMaxWidth + leftPadding + rightPadding + boxExtension
+    captionLineHeight = firstNameSize * 1.1
+    captionBoxHeight = firstNameBox.height + (captionLines.length - 1) * captionLineHeight
+  }
+
+  // Position: title on top (bottom edge fixed), caption below (top edge fixed)
+  // The anchor Y represents where title bottom / caption top meet
+  const anchorY = 794  // Moved up 50px from name anchorY (844)
+
+  // Draw title box FIRST so caption overlaps on top
+  ctx.save()
+  ctx.translate(anchorX, anchorY)
   ctx.rotate(radians)
 
-  // Title box (white with blue border)
-  const titleBoxWidth = 700
-  const titleBoxHeight = 80
+  // Title box (white with blue border - same as last name box)
+  // Bottom-justified: box extends upward from bottom edge
+  const titleBoxTop = -titleBoxHeight
   ctx.fillStyle = USQC26_COLORS.white
-  ctx.fillRect(0, -titleBoxHeight / 2, titleBoxWidth, titleBoxHeight)
+  ctx.fillRect(-titleBoxWidth + boxExtension, titleBoxTop, titleBoxWidth, titleBoxHeight)
   ctx.strokeStyle = USQC26_COLORS.secondary
-  ctx.lineWidth = 3
-  ctx.strokeRect(0, -titleBoxHeight / 2, titleBoxWidth, titleBoxHeight)
+  ctx.lineWidth = lastNameBox.borderWidth
+  ctx.strokeRect(-titleBoxWidth + boxExtension, titleBoxTop, titleBoxWidth, titleBoxHeight)
 
-  // Title text
-  ctx.font = `500 italic ${titleFontSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.white
-  ctx.textAlign = 'left'
+  // Title text (styled like first name: bottom-justified, overflow up)
+  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
+  ctx.letterSpacing = '0px'
+  ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
-  ctx.fillText(title, 16, 0)
+  ctx.lineJoin = 'miter'
+  ctx.miterLimit = 2
+
+  // Draw title lines bottom-justified (last line at bottom, first line above)
+  const titleTextPadding = lastNameBox.height / 2
+  for (let i = 0; i < titleLines.length; i++) {
+    const lineIndex = titleLines.length - 1 - i
+    const lineY = -titleTextPadding - (i * titleLineHeight) + textYOffset
+    const lineText = titleLines[lineIndex]
+
+    ctx.strokeStyle = USQC26_COLORS.primary
+    ctx.lineWidth = lastNameBox.strokeWidth
+    ctx.strokeText(lineText, -rightPadding + titleTextXOffset, lineY)
+    ctx.fillStyle = USQC26_COLORS.white
+    ctx.fillText(lineText, -rightPadding + titleTextXOffset, lineY)
+  }
 
   ctx.restore()
 
-  // Draw caption box and text
-  ctx.save()
-  ctx.translate(captionAnchorX, captionAnchorY)
-  ctx.rotate(radians)
+  // Draw caption box ON TOP if caption exists
+  if (caption) {
+    ctx.save()
+    ctx.translate(anchorX, anchorY)
+    ctx.rotate(radians)
 
-  // Caption box (light blue with white border)
-  const captionBoxWidth = 500
-  const captionBoxHeight = 50
-  ctx.fillStyle = USQC26_COLORS.secondary
-  ctx.fillRect(0, -captionBoxHeight / 2, captionBoxWidth, captionBoxHeight)
-  ctx.strokeStyle = USQC26_COLORS.white
-  ctx.lineWidth = 3
-  ctx.strokeRect(0, -captionBoxHeight / 2, captionBoxWidth, captionBoxHeight)
+    // Caption box (light blue with white border - same as first name box)
+    // Top-justified: box extends downward from top edge
+    ctx.fillStyle = USQC26_COLORS.secondary
+    ctx.fillRect(-captionBoxWidth + boxExtension, 0, captionBoxWidth, captionBoxHeight)
+    ctx.strokeStyle = USQC26_COLORS.white
+    ctx.lineWidth = firstNameBox.borderWidth
+    ctx.strokeRect(-captionBoxWidth + boxExtension, 0, captionBoxWidth, captionBoxHeight)
 
-  // Caption text
-  ctx.font = `500 italic ${captionFontSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.primary
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(caption, 16, 0)
+    // Caption text (styled like last name: top-justified, overflow down)
+    ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
+    ctx.letterSpacing = '0px'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'miter'
+    ctx.miterLimit = 2
+
+    // Draw caption lines top-justified (first line at top, subsequent lines below)
+    const captionTextPadding = firstNameBox.height / 2
+    for (let i = 0; i < captionLines.length; i++) {
+      const lineY = captionTextPadding + (i * captionLineHeight) + textYOffset
+      const lineText = captionLines[i]
+
+      ctx.strokeStyle = USQC26_COLORS.white
+      ctx.lineWidth = firstNameBox.strokeWidth
+      ctx.strokeText(lineText, -rightPadding + captionTextXOffset, lineY)
+      ctx.fillStyle = USQC26_COLORS.primary
+      ctx.fillText(lineText, -rightPadding + captionTextXOffset, lineY)
+    }
+
+    ctx.restore()
+  }
 
   ctx.restore()
 }
@@ -750,7 +837,7 @@ async function renderCardFrame(
   const img = await loadImage(imageUrl)
   drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
 
-  // 2. For standard player cards, draw name boxes BEFORE the frame (so frame covers them)
+  // 2. Draw content boxes BEFORE the frame (so frame covers them)
   const isStandardPlayer = card.cardType !== 'rare' && card.cardType !== 'super-rare' && card.cardType !== 'national-team'
   if (isStandardPlayer) {
     const firstName = 'firstName' in card ? card.firstName ?? '' : ''
@@ -758,6 +845,11 @@ async function renderCardFrame(
     if (firstName || lastName) {
       drawAngledNameBoxes(ctx, firstName, lastName)
     }
+  } else if (card.cardType === 'rare') {
+    // Rare card: draw title/caption boxes before frame
+    const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
+    const caption = 'caption' in card ? card.caption ?? '' : ''
+    drawRareCardContent(ctx, title, caption)
   }
 
   // 3. Draw the frame overlay
@@ -784,12 +876,8 @@ async function renderCardFrame(
 
   // 7. Draw card-type-specific content
   if (card.cardType === 'rare') {
-    // Rare card: centered title/caption
-    const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
-    const caption = 'caption' in card ? card.caption ?? '' : ''
-    drawRareCardContent(ctx, title, caption)
-
-    // Bottom bar for rare card
+    // Rare card: title/caption already drawn before frame
+    // Just draw bottom bar
     const photographer = card.photographer ?? ''
     drawBottomBar(ctx, photographer, 'RARE CARD', 'rare', cameraImg)
 
