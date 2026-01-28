@@ -88,23 +88,53 @@ Open http://localhost:5173. Both frontend and backend hot reload on save.
 
 ### SST Resources (sst.config.ts)
 
-- `Cards` - DynamoDB table with GSI on status+createdAt
-- `Media` - S3 bucket for uploads and renders
+- `Cards` - DynamoDB table with GSIs:
+  - `byStatus` (status + createdAt)
+  - `byTournamentStatus` (tournamentId + statusCreatedAt)
+- `Media` - S3 bucket for uploads, renders, and tournament config
+  - Lifecycle rules: crop uploads (14d), originals (2yr), renders (1yr)
 - `Api` - Lambda function running Hono
 - `CardRouter` - CloudFront router with routes:
   - `/api/*` → Lambda API
   - `/r/*` → S3 renders
-  - `/c/*` → S3 config
+  - `/c/*` → S3 config (tournament logos, team logos, overlays)
 
 ### API Routes (server/src/index.ts)
 
+**Public Endpoints:**
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/tournaments` | List published tournaments |
+| GET | `/tournaments/:id` | Get tournament config |
+| GET | `/tournaments/:id/teams` | Get tournament teams |
+| GET | `/admin-config` | Check if admin auth is enabled |
 | POST | `/uploads/presign` | Get presigned URL for S3 upload |
 | POST | `/cards` | Create new card draft |
+| GET | `/cards` | List cards by status (not drafts) |
 | GET | `/cards/:id` | Get card by ID |
-| PATCH | `/cards/:id` | Update card |
+| PATCH | `/cards/:id` | Update card (requires edit token) |
 | POST | `/cards/:id/submit` | Submit card for rendering |
+
+**Admin Endpoints** (require `Authorization: Bearer <password>` when auth enabled):
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/admin/tournaments` | List all tournaments (including unpublished) |
+| GET | `/admin/tournaments/:id` | Get tournament draft config |
+| POST | `/admin/tournaments` | Create new tournament |
+| PUT | `/admin/tournaments/:id` | Update tournament config |
+| POST | `/admin/tournaments/:id/publish` | Publish tournament |
+| POST | `/admin/tournaments/:id/logos-zip` | Bulk upload team logos |
+| POST | `/admin/tournaments/:id/assets/presign` | Presign tournament assets |
+| GET | `/admin/tournaments/:id/bundle` | Export tournament as ZIP |
+| POST | `/admin/tournaments/import-bundle` | Import tournament from ZIP |
+| GET | `/admin/cards` | List cards (including drafts) |
+| PATCH | `/admin/cards/:id` | Update card templateId |
+| DELETE | `/admin/cards/:id` | Delete draft card |
+| GET | `/admin/cards/:id/photo-url` | Get signed URL for original photo |
+| GET | `/admin/cards/:id/download-url` | Get signed URL for render |
+| POST | `/admin/cards/:id/renders/presign` | Presign render upload |
+| POST | `/admin/cards/:id/renders/commit` | Commit render and update status |
+| POST | `/admin/cards/:id/render` | Mark card as rendered |
 
 ### Data Flow
 
@@ -132,14 +162,19 @@ Generates 825x1125 PNG cards client-side:
 ## Development Notes
 
 - Card status flow: `draft` → `submitted` → `rendered`
-- Crop coordinates stored as normalized 0-1 floats (rotation disabled for v1)
+- Card types: `player`, `team-staff`, `media`, `official`, `tournament-staff`, `rare`
+- Crop coordinates stored as normalized 0-1 floats (rotation: 0, 90, 180, 270)
 - Card dimensions: 825x1125 pixels (constants in `shared/src/constants.ts`)
 - Max upload size: 15MB, allowed types: JPEG, PNG, WebP (render must be PNG)
 - S3 keys are versioned with unique upload IDs to avoid cache issues:
   - `uploads/original/<cardId>/<uploadId>.<ext>`
-  - `uploads/crop/<cardId>/<uploadId>.<ext>`
+  - `uploads/crop/<cardId>/<uploadId>.<ext>` (deprecated, expires after 14d)
   - `renders/<cardId>/<renderId>.png`
+- Tournament config stored in S3: `config/tournaments/<id>/<draft|published>/config.json`
+- Team logos: `config/tournaments/<id>/teams/<teamId>.png`
+- Template overlays: `config/tournaments/<id>/overlays/<templateId>/<uploadId>.png`
 - Public PATCH cannot set `status` or `renderKey` (server-controlled fields)
+- Edit token required for card mutations (stored in `X-Edit-Token` header)
 - Presign endpoint requires card to exist (prevents orphan uploads)
 - Submit endpoint requires valid renderKey and draft status
 
