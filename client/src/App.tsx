@@ -30,6 +30,17 @@ import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import CropGuides from './components/CropGuides'
 
+// Step definitions for progress tracker
+const STEPS = [
+  { id: 'type', label: 'Type' },
+  { id: 'photo', label: 'Photo' },
+  { id: 'crop', label: 'Crop' },
+  { id: 'details', label: 'Details' },
+  { id: 'submit', label: 'Submit' },
+] as const
+
+type StepId = typeof STEPS[number]['id']
+
 const ALLOWED_UPLOAD_TYPES: Set<string> = new Set(ALLOWED_UPLOAD_TYPES_LIST)
 const MAX_UPLOAD_RETRIES = 1
 const MAX_IMAGE_DIMENSION = 2600
@@ -384,6 +395,76 @@ async function resizeImageIfNeeded(file: File): Promise<{ file: File; width: num
   return { file: resizedFile, width: targetWidth, height: targetHeight }
 }
 
+// Icon components
+const IconUpload = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" y1="3" x2="12" y2="15" />
+  </svg>
+)
+
+const IconZoomIn = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="11" y1="8" x2="11" y2="14" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+)
+
+const IconZoomOut = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+)
+
+const IconReset = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+  </svg>
+)
+
+const IconGrid = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="7" height="7" />
+    <rect x="14" y="3" width="7" height="7" />
+    <rect x="14" y="14" width="7" height="7" />
+    <rect x="3" y="14" width="7" height="7" />
+  </svg>
+)
+
+const IconCheck = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+)
+
+const IconInfo = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" y1="16" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12.01" y2="8" />
+  </svg>
+)
+
+const IconDownload = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+)
+
+const IconCheckSmall = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+)
+
 function App() {
   const [form, setForm] = useState<FormState>(initialForm)
   const [selectedTournamentId, setSelectedTournamentId] = useState('')
@@ -412,6 +493,16 @@ function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [pendingDraft, setPendingDraft] = useState<SavedDraft | null>(null)
   const [teamSearch, setTeamSearch] = useState('')
+
+  // Refs for progress tracker scroll-to-section
+  const sectionRefs = useRef<Record<StepId, HTMLElement | null>>({
+    type: null,
+    photo: null,
+    crop: null,
+    details: null,
+    submit: null,
+  })
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({})
 
   const helloQuery = useQuery({
     queryKey: ['hello'],
@@ -620,6 +711,61 @@ function App() {
   }
 
   const hasPhoto = Boolean(photo || uploadedPhoto)
+
+  // Calculate current step for progress tracker
+  const currentStep = useMemo(() => {
+    if (!form.cardType) return 0
+    if (!hasPhoto) return 1
+    if (!normalizedCrop) return 2
+    const hasRequiredDetails = form.cardType === 'rare'
+      ? form.title.trim() && form.photographer.trim()
+      : form.firstName.trim() && form.lastName.trim() && form.position.trim() && form.photographer.trim()
+    if (!hasRequiredDetails) return 3
+    return 4
+  }, [form.cardType, hasPhoto, normalizedCrop, form.firstName, form.lastName, form.position, form.title, form.photographer])
+
+  // Get first incomplete field for a given step
+  const getFirstIncompleteField = useCallback((stepId: StepId): HTMLElement | null => {
+    switch (stepId) {
+      case 'type':
+        if (!form.cardType) return fieldRefs.current.cardType || null
+        break
+      case 'photo':
+        if (!hasPhoto) return fieldRefs.current.uploadZone || null
+        break
+      case 'crop':
+        if (!normalizedCrop) return sectionRefs.current.crop || null
+        break
+      case 'details':
+        if (form.cardType === 'rare') {
+          if (!form.title.trim()) return fieldRefs.current.title || null
+          if (!form.photographer.trim()) return fieldRefs.current.photographer || null
+        } else {
+          if (!form.firstName.trim()) return fieldRefs.current.firstName || null
+          if (!form.lastName.trim()) return fieldRefs.current.lastName || null
+          if (!form.position.trim()) return fieldRefs.current.position || null
+          if (!form.photographer.trim()) return fieldRefs.current.photographer || null
+        }
+        break
+    }
+    return null
+  }, [form.cardType, form.firstName, form.lastName, form.photographer, form.position, form.title, hasPhoto, normalizedCrop])
+
+  // Handler for step click - scrolls to section and focuses first incomplete field
+  const handleStepClick = useCallback((stepIndex: number) => {
+    const step = STEPS[stepIndex]
+    const section = sectionRefs.current[step.id]
+
+    section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+    // Focus first incomplete field after scroll completes
+    setTimeout(() => {
+      const field = getFirstIncompleteField(step.id)
+      if (field && 'focus' in field && typeof field.focus === 'function') {
+        field.focus()
+      }
+    }, 400)
+  }, [getFirstIncompleteField])
 
   const getValidationErrors = useCallback(() => {
     const errors: Partial<Record<
@@ -844,17 +990,12 @@ function App() {
     Object.keys(validationErrors).length === 0 &&
     Boolean(tournamentConfig)
 
-  const inputClass = (hasError: boolean) =>
-    `mt-2 w-full rounded-xl border ${
-      hasError ? 'border-rose-500/60' : 'border-white/10'
-    } bg-slate-950/60 px-3 py-2 text-sm text-white`
-
   const statusIndicator = useMemo(() => {
     const errorMessage = error ?? (helloQuery.error instanceof Error ? helloQuery.error.message : null)
     if (errorMessage) return { message: errorMessage, tone: 'error' as const }
 
     if (submitStatus === 'submitting') return { message: 'Submitting card...', tone: 'warning' as const }
-    if (submitStatus === 'done') return { message: 'Card submitted!', tone: 'success' as const }
+    if (submitStatus === 'done') return { message: 'Card submitted successfully!', tone: 'success' as const }
 
     if (saveMutation.isPending) {
       if (uploadStatus === 'uploading') return { message: 'Uploading photo...', tone: 'warning' as const }
@@ -863,10 +1004,10 @@ function App() {
 
     if (saveMutation.isSuccess) return { message: 'Draft saved', tone: 'success' as const }
     if (hasEdited && Object.keys(validationErrors).length > 0) {
-      return { message: 'Complete required fields to submit.', tone: 'error' as const }
+      return { message: 'Complete required fields to submit', tone: 'error' as const }
     }
 
-    return { message: 'Draft not saved yet', tone: 'neutral' as const }
+    return { message: 'Ready to create', tone: 'neutral' as const }
   }, [
     error,
     helloQuery.error,
@@ -877,13 +1018,6 @@ function App() {
     hasEdited,
     validationErrors,
   ])
-
-  const statusToneClass = {
-    neutral: 'text-slate-400',
-    warning: 'text-amber-400',
-    success: 'text-emerald-400',
-    error: 'text-rose-300',
-  }[statusIndicator.tone]
 
   const saveButtonLabel = saveMutation.isPending
     ? uploadStatus === 'uploading'
@@ -1227,30 +1361,40 @@ function App() {
     }
   }, [buildCardForRender, cropperImageUrl, form.cardType, form.templateId, normalizedCrop, tournamentConfig])
 
+  // Status badge styling
+  const getStatusBadgeClass = (tone: string) => {
+    switch (tone) {
+      case 'success': return 'status-badge status-badge-success'
+      case 'warning': return 'status-badge status-badge-warning'
+      case 'error': return 'status-badge status-badge-error'
+      default: return 'status-badge status-badge-neutral'
+    }
+  }
+
   return (
     <div className="app-shell min-h-screen">
       {/* Resume Draft Modal */}
       {pendingDraft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-xl">
-            <h2 className="text-lg font-semibold text-white">Resume your draft?</h2>
-            <p className="mt-2 text-sm text-slate-300">
+        <div className="modal-backdrop">
+          <div className="modal-content">
+            <h2 className="modal-title">Resume your draft?</h2>
+            <p className="modal-description">
               You have an unsaved draft from {new Date(pendingDraft.savedAt).toLocaleString()}.
               Would you like to continue where you left off?
             </p>
-            <p className="mt-2 text-xs text-slate-400">
-              Note: You&apos;ll need to re-upload your photo.
+            <p className="mt-3 text-xs text-[var(--text-muted)]">
+              Note: You will need to re-upload your photo.
             </p>
             <div className="mt-6 flex gap-3">
               <button
                 onClick={handleResumeDraft}
-                className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
+                className="studio-btn studio-btn-primary flex-1"
               >
                 Resume Draft
               </button>
               <button
                 onClick={handleDismissDraft}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10"
+                className="studio-btn studio-btn-secondary flex-1"
               >
                 Start Fresh
               </button>
@@ -1259,44 +1403,111 @@ function App() {
         </div>
       )}
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-12">
-        <header className="flex flex-col gap-4">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-            Trading Card Studio
-          </p>
-          <div className="space-y-2">
-            <h1 className="font-display text-4xl text-white md:text-5xl">
-              Build and submit your trading card
-            </h1>
-            <p className="max-w-2xl text-base text-slate-300">
-              Upload a photo, drag to frame the shot, and submit when it looks right.
-              We save a draft automatically as part of submission.
-            </p>
+      {/* Header */}
+      <header className="studio-header">
+        <div className="mx-auto flex max-w-7xl items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="text-lg font-bold text-[var(--text-primary)]">Card Studio</h1>
+            <span className="hidden text-sm text-[var(--text-muted)] sm:inline">Create your trading card</span>
           </div>
-        </header>
 
-        {!form.tournamentId ? (
-          <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Select a tournament</h2>
-                <p className="text-sm text-slate-400">
-                  Choose a tournament to load teams, positions, and branding.
-                </p>
-              </div>
-              <span className="text-xs text-slate-400">
-                {tournamentsQuery.isFetching ? 'Loading…' : `${tournamentsQuery.data.length} available`}
-              </span>
+          {/* Horizontal Progress Stepper - Desktop */}
+          {form.tournamentId && (
+            <div className="hidden items-center gap-1 md:flex">
+              {STEPS.map((step, index) => (
+                <button
+                  key={step.id}
+                  onClick={() => handleStepClick(index)}
+                  className={`step-button ${
+                    index < currentStep
+                      ? 'step-button-completed'
+                      : index === currentStep
+                        ? 'step-button-current'
+                        : 'step-button-pending'
+                  }`}
+                >
+                  <span className={`step-number ${
+                    index < currentStep
+                      ? 'step-number-completed'
+                      : index === currentStep
+                        ? 'step-number-current'
+                        : 'step-number-pending'
+                  }`}>
+                    {index < currentStep ? <IconCheckSmall /> : index + 1}
+                  </span>
+                  <span className="hidden lg:inline">{step.label}</span>
+                </button>
+              ))}
             </div>
-            <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-end">
-              <label className="flex-1 text-xs uppercase tracking-wide text-slate-400">
-                Tournament
+          )}
+
+          <div className="flex items-center gap-3">
+            <span className={`hidden sm:inline-flex ${getStatusBadgeClass(statusIndicator.tone)}`}>
+              {statusIndicator.tone === 'success' && <IconCheck />}
+              {statusIndicator.message}
+            </span>
+            {uploadProgress && (
+              <div className="flex items-center gap-2">
+                <div className="progress-bar w-24">
+                  <div
+                    className="progress-bar-fill"
+                    style={{ width: `${uploadProgress.percent}%` }}
+                  />
+                </div>
+                <span className="text-xs text-[var(--text-muted)]">{uploadProgress.percent}%</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Mobile Progress Indicator */}
+      {form.tournamentId && (
+        <div className="sticky top-[57px] z-20 md:hidden bg-[var(--bg-surface)] border-b border-[var(--border-light)]">
+          <div className="flex items-center justify-between px-4 py-3">
+            {STEPS.map((step, index) => (
+              <button
+                key={step.id}
+                onClick={() => handleStepClick(index)}
+                className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-medium transition
+                  ${index < currentStep
+                    ? 'bg-[var(--accent-primary)] text-white'
+                    : index === currentStep
+                      ? 'bg-[var(--accent-secondary)] text-white'
+                      : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]'
+                  }`}
+                aria-label={step.label}
+              >
+                {index < currentStep ? '✓' : index + 1}
+              </button>
+            ))}
+          </div>
+          <div className="px-4 py-2 text-center text-sm font-medium text-[var(--text-secondary)] border-t border-[var(--border-light)]">
+            {STEPS[currentStep].label}
+          </div>
+        </div>
+      )}
+
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        {!form.tournamentId ? (
+          /* Tournament Selection */
+          <div className="mx-auto max-w-lg">
+            <div className="studio-panel p-8">
+              <h2 className="text-xl font-bold text-[var(--text-primary)]">Get Started</h2>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                Select a tournament to load teams, positions, and branding.
+              </p>
+
+              <div className="mt-8">
+                <label className="studio-label">
+                  Tournament
+                </label>
                 <select
                   value={selectedTournamentId}
                   onChange={(event) => setSelectedTournamentId(event.target.value)}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
+                  className="studio-input studio-select"
                 >
-                  <option value="">Select tournament</option>
+                  <option value="">Select a tournament</option>
                   {tournamentsQuery.data.map((tournament) => (
                     <option key={tournament.id} value={tournament.id}>
                       {tournament.name.includes(String(tournament.year))
@@ -1305,305 +1516,481 @@ function App() {
                     </option>
                   ))}
                 </select>
-              </label>
+                <p className="studio-hint">
+                  {tournamentsQuery.isFetching ? 'Loading...' : `${tournamentsQuery.data.length} tournaments available`}
+                </p>
+              </div>
+
               <button
                 type="button"
                 onClick={handleTournamentContinue}
                 disabled={!selectedTournamentId}
-                className="rounded-full bg-emerald-500 px-6 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="studio-btn studio-btn-primary mt-6 w-full"
               >
-                Continue →
+                Continue
               </button>
             </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Admins can publish new tournaments from the admin panel.
-            </p>
-          </section>
+          </div>
         ) : (
-          <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr]">
-            <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-white">Card Details</h2>
-                  <p className="text-sm text-slate-400">
-                    Draft ID: {cardId ?? 'Auto-created on submit'}
-                  </p>
-                  <p className="text-xs text-slate-500">Fields marked * are required.</p>
-                </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400">
+          /* Main Studio Layout */
+          <div className="grid gap-8 lg:grid-cols-[400px_1fr]">
+            {/* Canvas Area */}
+            <div className="space-y-6 lg:order-2 order-1">
+              {/* Toolbar */}
+              <div className="studio-panel flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-[var(--text-primary)]">
+                    {tournamentConfig?.name ?? form.tournamentId}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => helloQuery.refetch()}
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
+                    onClick={handleTournamentReset}
+                    className="studio-btn studio-btn-ghost studio-btn-sm"
                   >
-                    Ping API
+                    Change
                   </button>
-                  <span>{helloQuery.data ? 'Connected' : 'Idle'}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    disabled={saveMutation.isPending}
+                    className="studio-btn studio-btn-secondary studio-btn-sm"
+                  >
+                    {saveButtonLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => submitMutation.mutate()}
+                    disabled={!canSubmit}
+                    className="studio-btn studio-btn-success studio-btn-sm"
+                  >
+                    {submitButtonLabel}
+                  </button>
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-xs text-slate-300">
-                <div>
-                  <span className="uppercase tracking-[0.2em] text-slate-500">Tournament</span>
-                  <div className="mt-1 text-sm text-white">
-                    {tournamentConfig?.name ?? form.tournamentId}
+              {/* Preview Card */}
+              <div className={`studio-panel p-6 ${submitStatus === 'done' ? 'celebrate' : ''}`}>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                    {renderedCardUrl ? 'Rendered Card' : 'Live Preview'}
+                  </h3>
+                  {previewUrl && !renderedCardUrl && (
+                    <span className="text-xs text-[var(--text-muted)]">Auto-updating</span>
+                  )}
+                </div>
+
+                <div className="canvas-wrapper">
+                  {renderedCardUrl ? (
+                    <div className="canvas-frame">
+                      <img
+                        src={renderedCardUrl}
+                        alt="Rendered trading card"
+                        className="w-full max-w-[300px]"
+                      />
+                    </div>
+                  ) : previewUrl ? (
+                    <div className="canvas-frame" style={{ aspectRatio: `${TRIM_ASPECT}` }}>
+                      <img
+                        src={previewUrl}
+                        alt="Live preview"
+                        className="h-full w-full max-w-[300px]"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="flex items-center justify-center rounded-lg border-2 border-dashed border-[var(--border-light)] bg-white text-center text-sm text-[var(--text-muted)]"
+                      style={{ aspectRatio: `${TRIM_ASPECT}`, width: '300px' }}
+                    >
+                      {isSubmitInProgress ? (
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--accent-primary)] border-t-transparent" />
+                          <span className="text-xs font-medium">Submitting...</span>
+                        </div>
+                      ) : previewError ? (
+                        <span className="text-[var(--accent-error)]">{previewError}</span>
+                      ) : (
+                        <span>Upload a photo to see preview</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {renderedCardUrl && (
+                  <div className="mt-4 flex items-center justify-center gap-3">
+                    <a
+                      href={renderedCardUrl}
+                      download="trading-card.png"
+                      className="studio-btn studio-btn-secondary studio-btn-sm"
+                    >
+                      <IconDownload />
+                      Download
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Crop Tool */}
+              <div
+                ref={(el) => { sectionRefs.current.crop = el }}
+                className="studio-panel scroll-mt-20 p-6"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">Frame Your Shot</h3>
+                    <p className="text-xs text-[var(--text-muted)]">Drag to position, scroll to zoom</p>
+                  </div>
+
+                  {/* Zoom Controls */}
+                  <div className="zoom-controls">
+                    <button
+                      type="button"
+                      onClick={() => handleZoom(-0.2)}
+                      className="zoom-btn tooltip"
+                      aria-label="Zoom out"
+                    >
+                      <IconZoomOut />
+                      <span className="tooltip-content">Zoom Out</span>
+                    </button>
+                    <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+                    <button
+                      type="button"
+                      onClick={() => handleZoom(0.2)}
+                      className="zoom-btn tooltip"
+                      aria-label="Zoom in"
+                    >
+                      <IconZoomIn />
+                      <span className="tooltip-content">Zoom In</span>
+                    </button>
+                    <div className="mx-1 h-4 w-px bg-[var(--border-light)]" />
+                    <button
+                      type="button"
+                      onClick={handleResetCrop}
+                      className="zoom-btn tooltip"
+                      aria-label="Reset"
+                    >
+                      <IconReset />
+                      <span className="tooltip-content">Reset</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowGuides((prev) => !prev)}
+                      className={`zoom-btn tooltip ${showGuides ? 'bg-[var(--bg-muted)]' : ''}`}
+                      aria-label="Toggle guides"
+                    >
+                      <IconGrid />
+                      <span className="tooltip-content">{showGuides ? 'Hide Guides' : 'Show Guides'}</span>
+                    </button>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowGuidesHelp((prev) => !prev)}
+                        className="zoom-btn"
+                        aria-label="Guide help"
+                      >
+                        <IconInfo />
+                      </button>
+                      {showGuidesHelp && (
+                        <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-xl border border-[var(--border-light)] bg-white p-4 shadow-lg">
+                          <div className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Print Guides</div>
+                          <ul className="space-y-2 text-xs text-[var(--text-secondary)]">
+                            <li className="flex items-start gap-2">
+                              <span className="mt-0.5 h-3 w-3 shrink-0 rounded-sm border-2 border-dashed border-sky-400" />
+                              <span><span className="font-medium text-sky-500">Blue</span> - Safe zone. Content here prints.</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <span className="mt-0.5 h-3 w-3 shrink-0 rounded-sm border-2 border-rose-400" />
+                              <span><span className="font-medium text-rose-500">Red</span> - Trim line. Where the card is cut.</span>
+                            </li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleTournamentReset}
-                  className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-white transition hover:border-white/40"
-                >
-                  Change
-                </button>
-              </div>
-              {!tournamentConfig ? (
-                <p className="mt-2 text-xs text-rose-300">
-                  Tournament config failed to load. Refresh or reselect the tournament.
-                </p>
-              ) : null}
 
-              <form
-                className="mt-6 grid gap-4 sm:grid-cols-2"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  setHasEdited(true)
-                  if (canSubmit) submitMutation.mutate()
-                }}
-              >
-                <label className="text-xs uppercase tracking-wide text-slate-400">
-                  Card Type <span className="text-rose-400">*</span>
-                  <select
-                    value={form.cardType}
-                    onChange={handleCardTypeChange}
-                    disabled={!tournamentConfig}
-                    className={inputClass(hasEdited && Boolean(validationErrors.cardType))}
-                  >
-                    <option value="">Select type</option>
-                    {tournamentConfig?.cardTypes
-                      .filter((entry) => entry.enabled)
-                      .map((entry) => (
-                        <option key={entry.type} value={entry.type}>
-                          {entry.label}
-                        </option>
-                      ))}
-                  </select>
-                  {hasEdited && validationErrors.cardType ? (
-                    <span className="mt-1 block text-[11px] text-rose-300">
-                      {validationErrors.cardType}
-                    </span>
-                  ) : null}
-                </label>
-
-                <label className="text-xs uppercase tracking-wide text-slate-400">
-                  Card Style
-                  <select
-                    value={form.templateId}
-                    onChange={handleFieldChange('templateId')}
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white"
-                  >
-                    <option value="">{`Default (${defaultTemplateLabel})`}</option>
-                    {hasUnknownTemplate ? (
-                      <option value={form.templateId}>{`Custom (${form.templateId})`}</option>
-                    ) : null}
-                    {templateOptions.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {form.cardType === 'rare' ? (
-                  <>
-                    <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
-                      Title <span className="text-rose-400">*</span>
-                      <input
-                        value={form.title}
-                        onChange={handleFieldChange('title')}
-                        maxLength={MAX_TITLE_LENGTH}
-                        className={inputClass(hasEdited && Boolean(validationErrors.title))}
-                        placeholder="Championship MVP"
-                      />
-                      {hasEdited && validationErrors.title ? (
-                        <span className="mt-1 block text-[11px] text-rose-300">
-                          {validationErrors.title}
-                        </span>
-                      ) : null}
-                    </label>
-                    <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
-                      Caption
-                      <textarea
-                        value={form.caption}
-                        onChange={handleFieldChange('caption')}
-                        maxLength={MAX_CAPTION_LENGTH}
-                        rows={2}
-                        className={inputClass(hasEdited && Boolean(validationErrors.caption))}
-                        placeholder="Awarded to the tournament MVP"
-                      />
-                      {hasEdited && validationErrors.caption ? (
-                        <span className="mt-1 block text-[11px] text-rose-300">
-                          {validationErrors.caption}
-                        </span>
-                      ) : null}
-                    </label>
-                  </>
-                ) : (
-                  <>
-                    {cardTypeConfig?.showTeamField ? (
-                      <label className="text-xs uppercase tracking-wide text-slate-400">
-                        Team <span className="text-rose-400">*</span>
-                        <input
-                          type="text"
-                          value={teamSearch}
-                          onChange={(e) => setTeamSearch(e.target.value)}
-                          placeholder="Search teams..."
-                          className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder:text-slate-500"
-                        />
-                        <select
-                          value={form.teamId}
-                          onChange={(e) => {
-                            handleFieldChange('teamId')(e)
-                            setTeamSearch('')
-                          }}
-                          className={inputClass(hasEdited && Boolean(validationErrors.teamId))}
-                        >
-                          <option value="">Select team{teamSearch ? ` (${filteredTeams.length} matches)` : ''}</option>
-                          {filteredTeams.map((team) => (
-                            <option key={team.id} value={team.id}>
-                              {team.name}
-                            </option>
-                          ))}
-                        </select>
-                        {hasEdited && validationErrors.teamId ? (
-                          <span className="mt-1 block text-[11px] text-rose-300">
-                            {validationErrors.teamId}
-                          </span>
-                        ) : null}
-                        {selectedTeam?.logoKey ? (
-                          <img
-                            src={assetUrlForKey(selectedTeam.logoKey)}
-                            alt={`${selectedTeam.name} logo`}
-                            className="mt-2 h-10 w-10 rounded-lg border border-white/10 object-contain"
-                          />
-                        ) : null}
-                      </label>
-                    ) : null}
-
-                    <label className="text-xs uppercase tracking-wide text-slate-400">
-                      Position <span className="text-rose-400">*</span>
-                      {cardTypeConfig?.positions && cardTypeConfig.positions.length > 0 ? (
-                        <select
-                          value={form.position}
-                          onChange={handleFieldChange('position')}
-                          className={inputClass(hasEdited && Boolean(validationErrors.position))}
-                        >
-                          <option value="">Select position</option>
-                          {cardTypeConfig.positions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          value={form.position}
-                          onChange={handleFieldChange('position')}
-                          maxLength={MAX_POSITION_LENGTH}
-                          className={inputClass(hasEdited && Boolean(validationErrors.position))}
-                          placeholder="Keeper"
-                        />
-                      )}
-                      {hasEdited && validationErrors.position ? (
-                        <span className="mt-1 block text-[11px] text-rose-300">
-                          {validationErrors.position}
-                        </span>
-                      ) : null}
-                    </label>
-
-                    {cardTypeConfig?.showJerseyNumber ? (
-                      <label className="text-xs uppercase tracking-wide text-slate-400">
-                        Jersey Number
-                        <input
-                          value={form.jerseyNumber}
-                          onChange={handleFieldChange('jerseyNumber')}
-                          maxLength={MAX_JERSEY_LENGTH}
-                          inputMode="numeric"
-                          pattern="\\d*"
-                          className={inputClass(hasEdited && Boolean(validationErrors.jerseyNumber))}
-                          placeholder="15"
-                        />
-                        {hasEdited && validationErrors.jerseyNumber ? (
-                          <span className="mt-1 block text-[11px] text-rose-300">
-                            {validationErrors.jerseyNumber}
-                          </span>
-                        ) : (
-                          <span className="mt-1 block text-[11px] text-slate-500">
-                            Numbers only, up to 2 digits.
-                          </span>
-                        )}
-                      </label>
-                    ) : null}
-
-                    <label className="text-xs uppercase tracking-wide text-slate-400">
-                      First Name <span className="text-rose-400">*</span>
-                      <input
-                        value={form.firstName}
-                        onChange={handleFieldChange('firstName')}
-                        maxLength={MAX_NAME_LENGTH}
-                        className={inputClass(hasEdited && Boolean(validationErrors.firstName))}
-                        placeholder="Brandon"
-                      />
-                      {hasEdited && validationErrors.firstName ? (
-                        <span className="mt-1 block text-[11px] text-rose-300">
-                          {validationErrors.firstName}
-                        </span>
-                      ) : null}
-                    </label>
-
-                    <label className="text-xs uppercase tracking-wide text-slate-400">
-                      Last Name <span className="text-rose-400">*</span>
-                      <input
-                        value={form.lastName}
-                        onChange={handleFieldChange('lastName')}
-                        maxLength={MAX_NAME_LENGTH}
-                        className={inputClass(hasEdited && Boolean(validationErrors.lastName))}
-                        placeholder="Williams"
-                      />
-                      {hasEdited && validationErrors.lastName ? (
-                        <span className="mt-1 block text-[11px] text-rose-300">
-                          {validationErrors.lastName}
-                        </span>
-                      ) : null}
-                    </label>
-                  </>
+                <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-xl bg-[var(--bg-muted)]">
+                  {cropperImageUrl ? (
+                    <Cropper
+                      image={cropperImageUrl}
+                      crop={crop}
+                      zoom={zoom}
+                      rotation={0}
+                      aspect={CARD_ASPECT}
+                      onCropChange={setCrop}
+                      onZoomChange={setZoom}
+                      onCropComplete={handleCropComplete}
+                      onMediaLoaded={handleMediaLoaded}
+                      showGrid={false}
+                      classes={{
+                        containerClassName: 'cropper-container',
+                        cropAreaClassName: 'cropper-area',
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-sm text-[var(--text-muted)]">
+                      Upload a photo to start cropping
+                    </div>
+                  )}
+                  <CropGuides visible={showGuides} mode="trim" />
+                </div>
+                {hasEdited && validationErrors.crop && (
+                  <p className="studio-error">{validationErrors.crop}</p>
                 )}
+              </div>
+            </div>
 
-                <label className="text-xs uppercase tracking-wide text-slate-400 sm:col-span-2">
-                  Photo Credit <span className="text-rose-400">*</span>
-                  <input
-                    value={form.photographer}
-                    onChange={handleFieldChange('photographer')}
-                    maxLength={MAX_PHOTOGRAPHER_LENGTH}
-                    className={inputClass(hasEdited && Boolean(validationErrors.photographer))}
-                    placeholder="Paul Schiopu"
-                  />
-                  {hasEdited && validationErrors.photographer ? (
-                    <span className="mt-1 block text-[11px] text-rose-400">
-                      {validationErrors.photographer}
-                    </span>
-                  ) : null}
-                </label>
-              </form>
+            {/* Sidebar - Form First */}
+            <div className="studio-panel overflow-hidden lg:order-1 order-2">
+              {/* Card Type Section */}
+              <div
+                ref={(el) => { sectionRefs.current.type = el }}
+                className="sidebar-section scroll-mt-20"
+              >
+                <h3 className="sidebar-section-title">Card Type</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="studio-label">
+                      Type <span className="studio-label-required">*</span>
+                    </label>
+                    <select
+                      ref={(el) => { fieldRefs.current.cardType = el }}
+                      value={form.cardType}
+                      onChange={handleCardTypeChange}
+                      disabled={!tournamentConfig}
+                      className={`studio-input studio-select ${hasEdited && validationErrors.cardType ? 'has-error' : ''}`}
+                    >
+                      <option value="">Select type</option>
+                      {tournamentConfig?.cardTypes
+                        .filter((entry) => entry.enabled)
+                        .map((entry) => (
+                          <option key={entry.type} value={entry.type}>
+                            {entry.label}
+                          </option>
+                        ))}
+                    </select>
+                    {hasEdited && validationErrors.cardType && (
+                      <p className="studio-error">{validationErrors.cardType}</p>
+                    )}
+                  </div>
 
-              <div className="mt-6">
-                <label className="text-xs uppercase tracking-wide text-slate-400">
-                  Card Photo <span className="text-rose-400">*</span>
-                </label>
-                <label
-                  className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed px-6 py-8 text-center text-sm text-slate-300 transition ${
-                    isDragging ? 'border-emerald-400/70 bg-emerald-500/10' : 'border-white/15 bg-slate-950/40'
-                  }`}
+                  {/* Style - only show when multiple templates available */}
+                  {(templateOptions.length > 1 || hasUnknownTemplate) && (
+                    <div>
+                      <label className="studio-label">Style</label>
+                      <select
+                        value={form.templateId}
+                        onChange={handleFieldChange('templateId')}
+                        className="studio-input studio-select"
+                      >
+                        <option value="">{`Default (${defaultTemplateLabel})`}</option>
+                        {hasUnknownTemplate && (
+                          <option value={form.templateId}>{`Custom (${form.templateId})`}</option>
+                        )}
+                        {templateOptions.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Details Section */}
+              <div
+                ref={(el) => { sectionRefs.current.details = el }}
+                className="sidebar-section scroll-mt-20"
+              >
+                <h3 className="sidebar-section-title">
+                  {form.cardType === 'rare' ? 'Card Details' : 'Player Details'}
+                </h3>
+
+                <div className="space-y-4">
+                  {form.cardType === 'rare' ? (
+                    <>
+                      <div>
+                        <label className="studio-label">
+                          Title <span className="studio-label-required">*</span>
+                        </label>
+                        <input
+                          ref={(el) => { fieldRefs.current.title = el }}
+                          value={form.title}
+                          onChange={handleFieldChange('title')}
+                          maxLength={MAX_TITLE_LENGTH}
+                          className={`studio-input ${hasEdited && validationErrors.title ? 'has-error' : ''}`}
+                          placeholder="Championship MVP"
+                        />
+                        {hasEdited && validationErrors.title && (
+                          <p className="studio-error">{validationErrors.title}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="studio-label">Caption</label>
+                        <textarea
+                          value={form.caption}
+                          onChange={handleFieldChange('caption')}
+                          maxLength={MAX_CAPTION_LENGTH}
+                          rows={2}
+                          className={`studio-input ${hasEdited && validationErrors.caption ? 'has-error' : ''}`}
+                          placeholder="Awarded to the tournament MVP"
+                        />
+                        {hasEdited && validationErrors.caption && (
+                          <p className="studio-error">{validationErrors.caption}</p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="studio-label">
+                            First Name <span className="studio-label-required">*</span>
+                          </label>
+                          <input
+                            ref={(el) => { fieldRefs.current.firstName = el }}
+                            value={form.firstName}
+                            onChange={handleFieldChange('firstName')}
+                            maxLength={MAX_NAME_LENGTH}
+                            className={`studio-input ${hasEdited && validationErrors.firstName ? 'has-error' : ''}`}
+                            placeholder="Brandon"
+                          />
+                          {hasEdited && validationErrors.firstName && (
+                            <p className="studio-error">{validationErrors.firstName}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="studio-label">
+                            Last Name <span className="studio-label-required">*</span>
+                          </label>
+                          <input
+                            ref={(el) => { fieldRefs.current.lastName = el }}
+                            value={form.lastName}
+                            onChange={handleFieldChange('lastName')}
+                            maxLength={MAX_NAME_LENGTH}
+                            className={`studio-input ${hasEdited && validationErrors.lastName ? 'has-error' : ''}`}
+                            placeholder="Williams"
+                          />
+                          {hasEdited && validationErrors.lastName && (
+                            <p className="studio-error">{validationErrors.lastName}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {cardTypeConfig?.showTeamField && (
+                        <div>
+                          <label className="studio-label">
+                            Team <span className="studio-label-required">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={teamSearch}
+                            onChange={(e) => setTeamSearch(e.target.value)}
+                            placeholder="Search teams..."
+                            className="studio-input mb-2"
+                          />
+                          <select
+                            value={form.teamId}
+                            onChange={(e) => {
+                              handleFieldChange('teamId')(e)
+                              setTeamSearch('')
+                            }}
+                            className={`studio-input studio-select ${hasEdited && validationErrors.teamId ? 'has-error' : ''}`}
+                          >
+                            <option value="">
+                              Select team{teamSearch ? ` (${filteredTeams.length} matches)` : ''}
+                            </option>
+                            {filteredTeams.map((team) => (
+                              <option key={team.id} value={team.id}>
+                                {team.name}
+                              </option>
+                            ))}
+                          </select>
+                          {hasEdited && validationErrors.teamId && (
+                            <p className="studio-error">{validationErrors.teamId}</p>
+                          )}
+                          {selectedTeam?.logoKey && (
+                            <img
+                              src={assetUrlForKey(selectedTeam.logoKey)}
+                              alt={`${selectedTeam.name} logo`}
+                              className="team-logo mt-2"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="studio-label">
+                            Position <span className="studio-label-required">*</span>
+                          </label>
+                          {cardTypeConfig?.positions && cardTypeConfig.positions.length > 0 ? (
+                            <select
+                              ref={(el) => { fieldRefs.current.position = el }}
+                              value={form.position}
+                              onChange={handleFieldChange('position')}
+                              className={`studio-input studio-select ${hasEdited && validationErrors.position ? 'has-error' : ''}`}
+                            >
+                              <option value="">Select</option>
+                              {cardTypeConfig.positions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              ref={(el) => { fieldRefs.current.position = el }}
+                              value={form.position}
+                              onChange={handleFieldChange('position')}
+                              maxLength={MAX_POSITION_LENGTH}
+                              className={`studio-input ${hasEdited && validationErrors.position ? 'has-error' : ''}`}
+                              placeholder="Keeper"
+                            />
+                          )}
+                          {hasEdited && validationErrors.position && (
+                            <p className="studio-error">{validationErrors.position}</p>
+                          )}
+                        </div>
+
+                        {cardTypeConfig?.showJerseyNumber && (
+                          <div>
+                            <label className="studio-label">Jersey #</label>
+                            <input
+                              value={form.jerseyNumber}
+                              onChange={handleFieldChange('jerseyNumber')}
+                              maxLength={MAX_JERSEY_LENGTH}
+                              inputMode="numeric"
+                              pattern="\\d*"
+                              className={`studio-input ${hasEdited && validationErrors.jerseyNumber ? 'has-error' : ''}`}
+                              placeholder="15"
+                            />
+                            {hasEdited && validationErrors.jerseyNumber ? (
+                              <p className="studio-error">{validationErrors.jerseyNumber}</p>
+                            ) : (
+                              <p className="studio-hint">1-2 digits</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Photo Section */}
+              <div
+                ref={(el) => { sectionRefs.current.photo = el }}
+                className="sidebar-section scroll-mt-20"
+              >
+                <h3 className="sidebar-section-title">Photo</h3>
+
+                <div
+                  ref={(el) => { fieldRefs.current.uploadZone = el }}
+                  tabIndex={0}
+                  className={`upload-zone ${isDragging ? 'is-dragging' : ''}`}
                   onClick={handleUploadClick}
                   onDrop={handleDrop}
                   onDragOver={handleDragOver}
@@ -1616,284 +2003,102 @@ function App() {
                     onChange={handleFileChange}
                     ref={fileInputRef}
                   />
-                  <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
-                    Drop photo here
+                  <div className="upload-zone-icon">
+                    <IconUpload />
                   </div>
-                  <p className="text-xs text-slate-500">
-                    or click to upload (JPG, PNG, WebP · max 15MB)
-                  </p>
-                  {photo ? (
-                    <p className="text-xs text-emerald-300">
-                      {photo.file.name} · {photo.width} x {photo.height} px
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-500">Auto-resized to {MAX_IMAGE_DIMENSION}px max</p>
+                  <div className="upload-zone-title">
+                    {photo ? 'Replace photo' : 'Drop photo here'}
+                  </div>
+                  <div className="upload-zone-hint">
+                    or click to browse (JPG, PNG, WebP)
+                  </div>
+                  {photo && (
+                    <div className="upload-zone-file">
+                      {photo.file.name} - {photo.width} x {photo.height}px
+                    </div>
                   )}
-                </label>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                  <span>{photo ? photo.file.name : 'No file selected'}</span>
-                  {uploadedPhoto && <span className="text-emerald-400">Uploaded</span>}
                 </div>
-                {photoError ? (
-                  <p className="mt-2 text-xs text-rose-300">{photoError}</p>
-                ) : hasEdited && validationErrors.photo ? (
-                  <p className="mt-2 text-xs text-rose-300">{validationErrors.photo}</p>
-                ) : null}
-              </div>
 
-              <div className="mt-6 flex flex-wrap items-center gap-4">
-                <button
-                  type="button"
-                  onClick={handleSaveDraft}
-                  disabled={saveMutation.isPending}
-                  className="rounded-full bg-white px-5 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {saveButtonLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => submitMutation.mutate()}
-                  disabled={!canSubmit}
-                  className="rounded-full bg-emerald-500 px-5 py-2 text-xs font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {submitButtonLabel}
-                </button>
-                <span className="text-xs text-slate-500">
-                  Submit saves a draft automatically.
-                </span>
-                <div className="flex flex-wrap items-center gap-3 text-xs">
-                  <span className={statusToneClass}>{statusIndicator.message}</span>
-                  {uploadProgress ? (
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="h-1 w-24 overflow-hidden rounded-full bg-white/10"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={uploadProgress.percent}
-                      >
-                        <div
-                          className="h-full rounded-full bg-emerald-400 transition-all"
-                          style={{ width: `${uploadProgress.percent}%` }}
-                        />
-                      </div>
-                      <span className="text-[11px] text-slate-400">
-                        Photo{' '}
-                        {uploadProgress.percent}%
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
-            <section className="space-y-6">
-              <div
-                className={`rounded-3xl border border-emerald-500/30 bg-emerald-950/20 p-6 backdrop-blur ${
-                  submitStatus === 'done' ? 'celebrate' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm uppercase tracking-[0.2em] text-emerald-400">
-                    {renderedCardUrl ? 'Rendered Card' : 'Live Preview'}
-                  </h3>
-                  {previewUrl && !renderedCardUrl ? (
-                    <span className="text-xs text-emerald-200/70">Updating preview</span>
-                  ) : null}
-                </div>
-                {renderedCardUrl ? (
-                  <>
-                    <div className="mt-4">
-                      <img
-                        src={renderedCardUrl}
-                        alt="Rendered trading card"
-                        className="w-full rounded-2xl shadow-lg"
-                      />
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      <a
-                        href={renderedCardUrl}
-                        download="trading-card.png"
-                        className="rounded-full border border-emerald-500/30 px-4 py-2 text-xs text-emerald-400 transition hover:border-emerald-500/60 hover:bg-emerald-500/10"
-                      >
-                        Download PNG
-                      </a>
-                      <span className="text-xs text-slate-400">
-                        Status: {savedCard?.status ?? 'unknown'}
-                      </span>
-                    </div>
-                  </>
-                ) : previewUrl ? (
-                  <div className="mt-4">
-                    <div
-                      className="w-full"
-                      style={{ aspectRatio: `${TRIM_ASPECT}` }}
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="Live preview trading card"
-                        className="h-full w-full rounded-2xl shadow-lg"
-                      />
-                    </div>
-                    <p className="mt-2 text-xs text-slate-400">
-                      Preview updates as you edit. Submit to send for rendering.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="mt-4">
-                    <div
-                      className="flex w-full items-center justify-center rounded-2xl border border-dashed border-emerald-500/30 bg-slate-950/50 text-xs text-emerald-200/70"
-                      style={{ aspectRatio: `${TRIM_ASPECT}` }}
-                    >
-                      {isSubmitInProgress ? (
-                        <div className="flex flex-col items-center gap-3 text-emerald-200/70">
-                          <div className="h-10 w-10 animate-spin rounded-full border border-emerald-400/40 border-t-transparent" />
-                          <span className="text-[11px] uppercase tracking-[0.2em]">
-                            Submitting card
-                          </span>
-                        </div>
-                      ) : previewError ? (
-                        previewError
-                      ) : (
-                        'Upload a photo and crop to see the live preview.'
-                      )}
-                    </div>
-                  </div>
+                {photoError && <p className="studio-error">{photoError}</p>}
+                {hasEdited && validationErrors.photo && !photoError && (
+                  <p className="studio-error">{validationErrors.photo}</p>
                 )}
-              </div>
 
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                <div>
-                  <h2 className="text-lg font-semibold text-white">Live Crop</h2>
-                  <p className="text-sm text-slate-400">
-                    Drag the image to frame it. Scroll or pinch to zoom.
-                  </p>
-                </div>
-
-                <div className="mt-5">
-                  <div className="relative aspect-[825/1125] w-full overflow-hidden rounded-[28px] bg-slate-950/60 shadow-[0_20px_60px_rgba(3,7,18,0.6)]">
-                    {cropperImageUrl ? (
-                      <Cropper
-                        image={cropperImageUrl}
-                        crop={crop}
-                        zoom={zoom}
-                        rotation={0}
-                        aspect={CARD_ASPECT}
-                        onCropChange={setCrop}
-                        onZoomChange={setZoom}
-                        onCropComplete={handleCropComplete}
-                        onMediaLoaded={handleMediaLoaded}
-                        showGrid={false}
-                        classes={{
-                          containerClassName: 'cropper-container',
-                          cropAreaClassName: 'cropper-area',
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">
-                        Upload a photo to start cropping
-                      </div>
-                    )}
-                    <CropGuides visible={showGuides} mode="trim" />
-                  </div>
-                  {hasEdited && validationErrors.crop ? (
-                    <p className="mt-2 text-xs text-rose-300">{validationErrors.crop}</p>
-                  ) : null}
-                </div>
-
-                <div className="mt-5 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleZoom(0.2)}
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                  >
-                    Zoom In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleZoom(-0.2)}
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                  >
-                    Zoom Out
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleResetCrop}
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                  >
-                    Reset
-                  </button>
-                  <div className="relative flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowGuides((prev) => !prev)}
-                      className="rounded-full border border-white/15 px-3 py-1 text-xs text-white transition hover:border-white/40"
-                    >
-                      {showGuides ? 'Hide Guides' : 'Show Guides'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowGuidesHelp((prev) => !prev)}
-                      className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 text-xs text-white/60 transition hover:border-white/40 hover:text-white"
-                      aria-label="About print guides"
-                    >
-                      ?
-                    </button>
-                    {showGuidesHelp && (
-                      <div className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-xl border border-white/10 bg-slate-900/95 p-3 text-xs shadow-xl backdrop-blur">
-                        <div className="mb-2 font-medium text-white">Print Guides</div>
-                        <ul className="space-y-1.5 text-slate-300">
-                          <li className="flex items-start gap-2">
-                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm border border-dashed border-sky-400" />
-                            <span><span className="text-sky-400">Blue</span> - Safe zone. Content here is guaranteed to print.</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm border border-rose-400" />
-                            <span><span className="text-rose-400">Red</span> - Trim line. Where the card will be cut.</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-sm bg-slate-600" />
-                            <span><span className="text-slate-400">Frame</span> - Bleed area. Extends beyond cut for full coverage.</span>
-                          </li>
-                        </ul>
-                      </div>
-                    )}
-                  </div>
+                <div className="mt-4">
+                  <label className="studio-label">
+                    Photo Credit <span className="studio-label-required">*</span>
+                  </label>
+                  <input
+                    ref={(el) => { fieldRefs.current.photographer = el }}
+                    value={form.photographer}
+                    onChange={handleFieldChange('photographer')}
+                    maxLength={MAX_PHOTOGRAPHER_LENGTH}
+                    className={`studio-input ${hasEdited && validationErrors.photographer ? 'has-error' : ''}`}
+                    placeholder="Photographer name"
+                  />
+                  {hasEdited && validationErrors.photographer && (
+                    <p className="studio-error">{validationErrors.photographer}</p>
+                  )}
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                <h3 className="text-sm uppercase tracking-[0.2em] text-slate-400">
-                  Preview Meta
-                </h3>
-                <div className="mt-4 space-y-3">
-                  <div className="font-display text-2xl text-white">{displayName}</div>
-                  <div className="text-sm text-slate-300">
+              {/* Submit Section */}
+              <div
+                ref={(el) => { sectionRefs.current.submit = el }}
+                className="sidebar-section scroll-mt-20"
+              >
+                <h3 className="sidebar-section-title">Submit</h3>
+                <p className="mb-4 text-sm text-[var(--text-secondary)]">
+                  Ready to create your card? Review the preview and submit.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    disabled={saveMutation.isPending}
+                    className="studio-btn studio-btn-secondary flex-1"
+                  >
+                    {saveButtonLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => submitMutation.mutate()}
+                    disabled={!canSubmit}
+                    className="studio-btn studio-btn-success flex-1"
+                  >
+                    {submitButtonLabel}
+                  </button>
+                </div>
+              </div>
+
+              {/* Preview Meta */}
+              <div className="sidebar-section">
+                <h3 className="sidebar-section-title">Preview</h3>
+                <div className="preview-meta">
+                  <div className="preview-meta-name">{displayName}</div>
+                  <div className="preview-meta-detail">
                     {form.cardType === 'rare'
                       ? form.caption || 'Caption'
                       : [form.position || 'Position', selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : '')]
                           .filter(Boolean)
                           .join(' / ')}
                   </div>
-                  <div className="text-xs text-slate-400">
-                    Crop: {normalizedCrop ? `${normalizedCrop.w.toFixed(2)} x ${normalizedCrop.h.toFixed(2)}` : '-'}
-                  </div>
-                  {uploadedPhoto && (
-                    <div className="text-xs text-slate-400">
-                      Photo: <span className="text-emerald-400">{uploadedPhoto.key}</span>
+                  {normalizedCrop && (
+                    <div className="mt-2 text-xs text-[var(--text-muted)]">
+                      Crop: {normalizedCrop.w.toFixed(2)} x {normalizedCrop.h.toFixed(2)}
                     </div>
                   )}
-                  {savedCard ? (
-                    <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-xs text-slate-300">
-                      Saved as <span className="text-white">{savedCard.id}</span>
+                  {savedCard && (
+                    <div className="mt-3 rounded-lg bg-white px-3 py-2 text-xs text-[var(--text-secondary)]">
+                      Draft ID: <span className="font-mono font-medium">{savedCard.id}</span>
                     </div>
-                  ) : null}
+                  )}
                 </div>
               </div>
-            </section>
+            </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }
