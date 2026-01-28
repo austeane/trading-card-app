@@ -21,12 +21,62 @@ export const USQC_2026_CONFIG: TournamentConfig = {
     {
       "id": "texas-state",
       "name": "Texas State Quadball",
-      "logoKey": "config/tournaments/usqc-2026/teams/texas-state.png"
+      "logoKey": "config/tournaments/usqc-2025/teams/texas-state.png"
     },
     {
       "id": "usa-quadball",
       "name": "USA Quadball",
-      "logoKey": "config/tournaments/usqc-2026/teams/usa-quadball.png"
+      "logoKey": "config/tournaments/usqc-2025/teams/usa-quadball.png"
+    },
+    {
+      "id": "boston-red-pandas",
+      "name": "Boston Red Pandas",
+      "logoKey": "config/tournaments/usqc-2025/teams/boston-red-pandas.png"
+    },
+    {
+      "id": "boston-university",
+      "name": "Boston University Quadball",
+      "logoKey": "config/tournaments/usqc-2025/teams/boston-university.png"
+    },
+    {
+      "id": "bay-area-breakers",
+      "name": "Bay Area Breakers",
+      "logoKey": "config/tournaments/usqc-2025/teams/bay-area-breakers.png"
+    },
+    {
+      "id": "chicago-united",
+      "name": "Chicago United",
+      "logoKey": "config/tournaments/usqc-2025/teams/chicago-united.png"
+    },
+    {
+      "id": "new-york-titans",
+      "name": "New York Titans",
+      "logoKey": "config/tournaments/usqc-2025/teams/new-york-titans.png"
+    },
+    {
+      "id": "indy-intensity",
+      "name": "Indy Intensity",
+      "logoKey": "config/tournaments/usqc-2025/teams/indy-intensity.png"
+    },
+    {
+      "id": "lone-star-qc",
+      "name": "Lone Star QC",
+      "logoKey": "config/tournaments/usqc-2025/teams/lone-star-qc.png"
+    },
+    {
+      "id": "lost-boys",
+      "name": "Lost Boys",
+      "logoKey": "config/tournaments/usqc-2025/teams/lost-boys.png"
+    },
+    {
+      "id": "silicon-valley-vipers",
+      "name": "Silicon Valley Vipers",
+      "logoKey": "config/tournaments/usqc-2025/teams/silicon-valley-vipers.png"
+    },
+    {
+      "id": "washington-admirals",
+      "name": "Washington Admirals",
+      "logoKey": "config/tournaments/usqc-2025/teams/washington-admirals.png"
     }
   ],
   "cardTypes": [
