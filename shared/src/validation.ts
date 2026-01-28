@@ -8,9 +8,9 @@ export const ALLOWED_UPLOAD_TYPES = [
 
 export const ALLOWED_RENDER_TYPES = ['image/png'] as const
 
-export const MAX_NAME_LENGTH = 24
-export const MAX_TITLE_LENGTH = 48
-export const MAX_CAPTION_LENGTH = 120
+export const MAX_NAME_LENGTH = 50
+export const MAX_TITLE_LENGTH = 50
+export const MAX_CAPTION_LENGTH = 100
 export const MAX_PHOTOGRAPHER_LENGTH = 48
 export const MAX_TEAM_LENGTH = 64
 export const MAX_POSITION_LENGTH = 32

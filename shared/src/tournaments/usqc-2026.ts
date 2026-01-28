@@ -113,13 +113,13 @@ export const USQC_2026_CONFIG: TournamentConfig = {
       "enabled": true,
       "label": "Team Staff",
       "showTeamField": true,
-      "showJerseyNumber": false,
+      "showJerseyNumber": true,
       "positions": [
         "Captain",
         "Coach",
         "Manager",
         "Mascot",
-        "Team Staff"
+        "Staff"
       ]
     },
     {
@@ -156,6 +156,7 @@ export const USQC_2026_CONFIG: TournamentConfig = {
       "label": "Tournament Staff",
       "showTeamField": false,
       "showJerseyNumber": false,
+      "logoOverrideKey": "config/tournaments/usqc-2026/logos/tournament.png",
       "positions": [
         "Gameplay",
         "Tournament Staff",
@@ -168,11 +169,12 @@ export const USQC_2026_CONFIG: TournamentConfig = {
       "label": "Rare Card",
       "showTeamField": false,
       "showJerseyNumber": false,
+      "logoOverrideKey": "config/tournaments/usqc-2026/logos/tournament.png",
       "positions": []
     },
     {
       "type": "super-rare",
-      "enabled": true,
+      "enabled": false,
       "label": "Super Rare Card",
       "showTeamField": false,
       "showJerseyNumber": true,
