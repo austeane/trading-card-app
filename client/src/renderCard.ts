@@ -826,17 +826,27 @@ async function renderCardFrame(
     // Standard player card (includes team-staff, media, official, tournament-staff)
     // Note: Name boxes are drawn earlier (before frame) so they appear underneath
 
-    // Position and number (jersey number is optional for some card types like team-staff)
-    if ('position' in card && card.position) {
-      const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
-      drawPositionNumber(ctx, card.position, jerseyNumber)
-    }
-
-    // Bottom bar
     const photographer = card.photographer ?? ''
-    const teamName = team?.name ?? ''
+    const position = 'position' in card ? card.position ?? '' : ''
     const rarity = card.rarity ?? 'common'
-    drawBottomBar(ctx, photographer, teamName, rarity, cameraImg)
+
+    // For media, official, and tournament-staff: show position in bottom bar instead of top-right
+    const isPositionInBottomBar = card.cardType === 'media' || card.cardType === 'official' || card.cardType === 'tournament-staff'
+
+    if (isPositionInBottomBar) {
+      // Position goes in bottom bar (where team name normally is)
+      drawBottomBar(ctx, photographer, position, rarity, cameraImg)
+    } else {
+      // Position and number in top-right (jersey number is optional for some card types like team-staff)
+      if (position) {
+        const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+        drawPositionNumber(ctx, position, jerseyNumber)
+      }
+
+      // Bottom bar with team name
+      const teamName = team?.name ?? ''
+      drawBottomBar(ctx, photographer, teamName, rarity, cameraImg)
+    }
   }
 }
 
