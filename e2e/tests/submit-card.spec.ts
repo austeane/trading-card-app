@@ -2,17 +2,12 @@ import { test, expect } from '@playwright/test'
 import path from 'path'
 
 /**
- * E2E test for the happy path: submitting a player card.
+ * E2E tests for the trading card submission flow.
  *
  * Prerequisites:
- * - Backend running with AWS credentials (AWS_PROFILE=prod npx sst dev --mode mono)
- * - Frontend running (pnpm dev:client) OR let Playwright start it via webServer config
+ * - For production tests: Use playwright.prod.config.ts
+ * - For local development: Backend running (AWS_PROFILE=prod npx sst dev)
  * - Test image available at ~/Desktop/IMG_7946.jpeg (or update path)
- *
- * Known Issues:
- * - SST dev has intermittent connectivity issues that cause "Failed to fetch" errors
- * - The first test in a run typically succeeds, subsequent tests may fail
- * - Card creation API calls may fail initially but recover during submit flow
  */
 
 const TEST_IMAGE_PATH = path.join(
@@ -25,16 +20,19 @@ const TEST_IMAGE_PATH = path.join(
 test.setTimeout(90000)
 
 test.describe('Submit Card Flow', () => {
-  test.beforeEach(async ({ page }) => {
-    // Navigate to the app
-    await page.goto('/')
+  test.beforeEach(async ({ page, baseURL }) => {
+    // Navigate to the app - React will read localStorage here
+    await page.goto(baseURL || '/')
 
-    // Clear any existing draft from localStorage to ensure clean state
+    // Immediately clear localStorage (before waiting for app to fully load)
     await page.evaluate(() => {
       localStorage.removeItem('trading-card-draft')
     })
 
-    // Wait for the app to load
+    // Reload to ensure clean state - React will now read empty localStorage
+    await page.reload()
+
+    // Wait for the app to load with clean state
     await expect(page.locator('h1, h2').first()).toBeVisible({ timeout: 10000 })
   })
 
@@ -113,18 +111,56 @@ test.describe('Submit Card Flow', () => {
     ).toBeVisible({ timeout: 60000 })
   })
 
-  /**
-   * This test validates the draft resume functionality but is skipped due to SST dev
-   * connectivity issues. The test passes when run manually against production, but
-   * SST dev's local Lambda URL becomes unresponsive during card creation API calls.
-   *
-   * The card creation API call fails with "Failed to fetch" even though:
-   * - The backend responds correctly to curl requests
-   * - The player card submission test succeeds (it has a fallback during submit)
-   *
-   * This appears to be an SST dev limitation, not a code bug.
-   */
-  test.skip('should resume draft after page refresh', async ({ page }) => {
+  test('should handle rare card flow', async ({ page }) => {
+    // Select tournament
+    const tournamentSelect = page.locator('select').first()
+    await expect(tournamentSelect).toBeVisible({ timeout: 10000 })
+    await tournamentSelect.selectOption({ index: 1 })
+    await page.getByRole('button', { name: /continue/i }).click()
+
+    // Select rare card type
+    const cardTypeSelect = page.locator('select').filter({ hasText: /select type/i })
+    await expect(cardTypeSelect).toBeVisible({ timeout: 5000 })
+    await cardTypeSelect.selectOption('rare')
+
+    // Upload photo
+    const fileInput = page.locator('input[type="file"]')
+    await fileInput.setInputFiles(TEST_IMAGE_PATH)
+
+    // Wait for cropper
+    await expect(page.getByTestId('container')).toBeVisible({
+      timeout: 30000,
+    })
+
+    // For rare cards, fill Title (placeholder="Championship MVP")
+    await page.locator('input[placeholder="Championship MVP"]').fill('Test Rare Card')
+
+    // Photographer credit (placeholder="Photographer name")
+    await page.locator('input[placeholder="Photographer name"]').fill('Rare Card Photographer')
+
+    // Wait for form to be ready
+    await expect(page.getByText(/ready to create|draft saved/i).first()).toBeVisible({ timeout: 15000 })
+    await page.waitForTimeout(3000)
+
+    // Submit - use specific button name
+    const submitButton = page.getByRole('button', { name: 'Submit Card' }).first()
+    await expect(submitButton).toBeEnabled({ timeout: 10000 })
+    await submitButton.click()
+
+    // Handle confirmation
+    const confirmButton = page.getByRole('button', { name: /confirm|yes/i }).first()
+    if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await confirmButton.click()
+    }
+
+    // Wait for success
+    await expect(
+      page.getByText(/success|download|submitted/i).first()
+    ).toBeVisible({ timeout: 60000 })
+  })
+
+  // This test intentionally runs last since it leaves a draft in localStorage
+  test('should resume draft after page refresh', async ({ page, baseURL }) => {
     // Select tournament
     const tournamentSelect = page.locator('select').first()
     await expect(tournamentSelect).toBeVisible({ timeout: 10000 })
@@ -185,59 +221,5 @@ test.describe('Submit Card Flow', () => {
 
     // Verify cropper is visible (photo restored)
     await expect(page.getByTestId('container')).toBeVisible({ timeout: 15000 })
-  })
-
-  /**
-   * This test validates rare card submission but is skipped for the same SST dev
-   * connectivity issues as the resume draft test. The test works when run first
-   * or against production, but fails when run after other tests due to the
-   * backend becoming unresponsive.
-   */
-  test.skip('should handle rare card flow', async ({ page }) => {
-    // Select tournament
-    const tournamentSelect = page.locator('select').first()
-    await expect(tournamentSelect).toBeVisible({ timeout: 10000 })
-    await tournamentSelect.selectOption({ index: 1 })
-    await page.getByRole('button', { name: /continue/i }).click()
-
-    // Select rare card type
-    const cardTypeSelect = page.locator('select').filter({ hasText: /select type/i })
-    await expect(cardTypeSelect).toBeVisible({ timeout: 5000 })
-    await cardTypeSelect.selectOption('rare')
-
-    // Upload photo
-    const fileInput = page.locator('input[type="file"]')
-    await fileInput.setInputFiles(TEST_IMAGE_PATH)
-
-    // Wait for cropper
-    await expect(page.getByTestId('container')).toBeVisible({
-      timeout: 30000,
-    })
-
-    // For rare cards, fill Title (placeholder="Championship MVP")
-    await page.locator('input[placeholder="Championship MVP"]').fill('Test Rare Card')
-
-    // Photographer credit (placeholder="Photographer name")
-    await page.locator('input[placeholder="Photographer name"]').fill('Rare Card Photographer')
-
-    // Wait for form to be ready
-    await expect(page.getByText(/ready to create|draft saved/i).first()).toBeVisible({ timeout: 15000 })
-    await page.waitForTimeout(3000)
-
-    // Submit - use specific button name
-    const submitButton = page.getByRole('button', { name: 'Submit Card' }).first()
-    await expect(submitButton).toBeEnabled({ timeout: 10000 })
-    await submitButton.click()
-
-    // Handle confirmation
-    const confirmButton = page.getByRole('button', { name: /confirm|yes/i }).first()
-    if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await confirmButton.click()
-    }
-
-    // Wait for success
-    await expect(
-      page.getByText(/success|download|submitted/i).first()
-    ).toBeVisible({ timeout: 60000 })
   })
 })

@@ -1653,11 +1653,18 @@ app.patch('/cards/:id', async (c) => {
           if (photoKeyError) {
             error = photoKeyError
           } else {
-            // Update individual photo fields to preserve existing data
-            // (avoids wiping out other photo fields when only updating e.g. crop)
-            for (const [key, value] of Object.entries(photoUpdate)) {
-              pushSet(draft, `photo.${key}`, value)
-            }
+            // Fetch existing card to merge photo fields
+            // (DynamoDB can't update nested paths if parent doesn't exist)
+            const existingResult = await ddb.send(
+              new GetCommand({
+                TableName: Resource.Cards.name,
+                Key: { id },
+                ProjectionExpression: 'photo',
+              })
+            )
+            const existingPhoto = (existingResult.Item?.photo as Card['photo']) || {}
+            const mergedPhoto = { ...existingPhoto, ...photoUpdate }
+            pushSet(draft, 'photo', mergedPhoto)
           }
         }
       }
