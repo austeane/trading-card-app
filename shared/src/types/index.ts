@@ -34,6 +34,156 @@ export type TemplateFlags = {
   showWatermarkJersey: boolean;
 };
 
+export type LayoutColorPalette = {
+  primary: string;
+  secondary: string;
+  white: string;
+  numberOverlay: string;
+};
+
+export type LayoutTypography = {
+  fontFamily: string;
+};
+
+export type Usqc26LayoutV1 = {
+  kind: "usqc26-v1";
+  palette: LayoutColorPalette;
+  typography: LayoutTypography;
+  frame: {
+    outerRadius: number;
+    innerX: number;
+    innerY: number;
+    innerWidth: number;
+    innerHeight: number;
+    innerRadius: number;
+  };
+  name: {
+    rotation: number;
+    maxWidth: number;
+    firstNameBox: {
+      width: number;
+      height: number;
+      borderWidth: number;
+      strokeWidth: number;
+    };
+    lastNameBox: {
+      width: number;
+      height: number;
+      borderWidth: number;
+      strokeWidth: number;
+    };
+    anchorX: number;
+    anchorY: number;
+    firstNameSize: number;
+    lastNameSize: number;
+    letterSpacing: {
+      firstName: number;
+      lastName: number;
+    };
+    leftPadding: number;
+    rightPadding: number;
+    boxExtension: number;
+    textYOffset: number;
+    boxOffsets: {
+      firstName: number;
+      lastName: number;
+    };
+    textOffsets: {
+      firstName: number;
+      lastName: number;
+    };
+  };
+  eventBadge: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    borderRadius: number;
+    borderWidth: number;
+    fontSize: number;
+    textYOffset: number;
+  };
+  positionNumber: {
+    centerX: number;
+    topY: number;
+    positionFontSize: number;
+    numberFontSize: number;
+    positionLetterSpacing: number;
+    numberLetterSpacing: number;
+    positionStrokeWidth: number;
+    numberStrokeWidth: number;
+    numberXOffset: number;
+  };
+  teamLogo: {
+    x: number;
+    y: number;
+    maxWidth: number;
+    maxHeight: number;
+    strokeWidth: number;
+    strokeColor: string;
+  };
+  bottomBar: {
+    y: number;
+    height: number;
+    textYOffset: number;
+    cameraIcon: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+    photographerX: number;
+    rarityX: number;
+    raritySize: number;
+    rarityGap: number;
+    teamNameX: number;
+    fontSize: number;
+    letterSpacing: {
+      photographer: number;
+      teamName: number;
+    };
+  };
+  rareCard: {
+    rotation: number;
+    anchorX: number;
+    anchorY: number;
+    maxWidth: number;
+    titleTextOffsetX: number;
+    captionTextOffsetX: number;
+    titleLetterSpacing: number;
+    captionLetterSpacing: number;
+  };
+  superRare: {
+    centerX: number;
+    firstNameY: number;
+    lastNameY: number;
+    firstNameSize: number;
+    lastNameSize: number;
+  };
+  nationalTeam: {
+    rotation: number;
+    anchorX: number;
+    anchorY: number;
+    boxWidth: number;
+    boxHeight: number;
+    boxBorderWidth: number;
+    textPaddingX: number;
+    nameFontSize: number;
+    defaultTeamName: string;
+    logo: {
+      x: number;
+      y: number;
+      maxWidth: number;
+      maxHeight: number;
+    };
+  };
+};
+
+export type TemplateLayout = Usqc26LayoutV1;
+
+export type TemplateLayoutOverride =
+  | ({ kind: "usqc26-v1" } & Partial<Omit<Usqc26LayoutV1, "kind">>);
+
 export type TemplateDefinition = {
   id: string;
   label: string;
@@ -41,6 +191,7 @@ export type TemplateDefinition = {
   theme?: Partial<TemplateTheme>;
   flags?: Partial<TemplateFlags>;
   overlayPlacement?: "belowText" | "aboveText";
+  layout?: TemplateLayoutOverride;
 };
 
 export type TemplateDefaults = {
@@ -57,6 +208,7 @@ export type RenderMeta = {
     theme: TemplateTheme;
     flags: TemplateFlags;
     overlayPlacement: "belowText" | "aboveText";
+    layout: TemplateLayout;
   };
 };
 

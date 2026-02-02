@@ -1,4 +1,5 @@
 import type { TournamentConfig, TournamentListEntry } from '../types'
+import { USQC26_LAYOUT_V1 } from '../constants'
 
 export const USQC_2026_TOURNAMENT: TournamentListEntry = {
   "id": "usqc-2026",
@@ -190,7 +191,8 @@ export const USQC_2026_CONFIG: TournamentConfig = {
   "templates": [
     {
       "id": "usqc26",
-      "label": "USQC26"
+      "label": "USQC26",
+      "layout": USQC26_LAYOUT_V1
     }
   ],
   "defaultTemplates": {

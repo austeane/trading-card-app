@@ -9,7 +9,18 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import type { ApiResponse, Card, CardStatus, CardType, CropRect, RenderMeta, TournamentConfig, TournamentListEntry } from 'shared'
+import type {
+  ApiResponse,
+  Card,
+  CardStatus,
+  CardType,
+  CropRect,
+  RenderMeta,
+  TemplateLayout,
+  Usqc26LayoutV1,
+  TournamentConfig,
+  TournamentListEntry,
+} from 'shared'
 import {
   ALLOWED_RENDER_TYPES as ALLOWED_RENDER_TYPES_LIST,
   ALLOWED_UPLOAD_TYPES as ALLOWED_UPLOAD_TYPES_LIST,
@@ -249,6 +260,423 @@ const TEMPLATE_FLAG_KEYS = [
   'showWatermarkJersey',
 ] as const
 
+const requireStringField = (value: unknown) => normalizeString(value)
+
+const requireNumberField = (value: unknown, label: string) => {
+  const num = toNumber(value)
+  if (num === undefined) return `${label} must be a number`
+  return num
+}
+
+const parseUsqc26Layout = (value: Record<string, unknown>): Usqc26LayoutV1 | string => {
+  const paletteSource = value.palette
+  if (!isRecord(paletteSource)) return 'renderMeta.templateSnapshot.layout.palette is required'
+  const palettePrimary = requireStringField(paletteSource.primary)
+  if (!palettePrimary) return 'renderMeta.templateSnapshot.layout.palette.primary is required'
+  const paletteSecondary = requireStringField(paletteSource.secondary)
+  if (!paletteSecondary) return 'renderMeta.templateSnapshot.layout.palette.secondary is required'
+  const paletteWhite = requireStringField(paletteSource.white)
+  if (!paletteWhite) return 'renderMeta.templateSnapshot.layout.palette.white is required'
+  const paletteNumberOverlay = requireStringField(paletteSource.numberOverlay)
+  if (!paletteNumberOverlay) return 'renderMeta.templateSnapshot.layout.palette.numberOverlay is required'
+  const palette = {
+    primary: palettePrimary,
+    secondary: paletteSecondary,
+    white: paletteWhite,
+    numberOverlay: paletteNumberOverlay,
+  }
+
+  const typographySource = value.typography
+  if (!isRecord(typographySource)) return 'renderMeta.templateSnapshot.layout.typography is required'
+  const fontFamily = requireStringField(typographySource.fontFamily)
+  if (!fontFamily) return 'renderMeta.templateSnapshot.layout.typography.fontFamily is required'
+
+  const frameSource = value.frame
+  if (!isRecord(frameSource)) return 'renderMeta.templateSnapshot.layout.frame is required'
+  const outerRadius = requireNumberField(frameSource.outerRadius, 'renderMeta.templateSnapshot.layout.frame.outerRadius')
+  if (typeof outerRadius !== 'number') return outerRadius
+  const innerX = requireNumberField(frameSource.innerX, 'renderMeta.templateSnapshot.layout.frame.innerX')
+  if (typeof innerX !== 'number') return innerX
+  const innerY = requireNumberField(frameSource.innerY, 'renderMeta.templateSnapshot.layout.frame.innerY')
+  if (typeof innerY !== 'number') return innerY
+  const innerWidth = requireNumberField(frameSource.innerWidth, 'renderMeta.templateSnapshot.layout.frame.innerWidth')
+  if (typeof innerWidth !== 'number') return innerWidth
+  const innerHeight = requireNumberField(frameSource.innerHeight, 'renderMeta.templateSnapshot.layout.frame.innerHeight')
+  if (typeof innerHeight !== 'number') return innerHeight
+  const innerRadius = requireNumberField(frameSource.innerRadius, 'renderMeta.templateSnapshot.layout.frame.innerRadius')
+  if (typeof innerRadius !== 'number') return innerRadius
+
+  const nameSource = value.name
+  if (!isRecord(nameSource)) return 'renderMeta.templateSnapshot.layout.name is required'
+  const nameRotation = requireNumberField(nameSource.rotation, 'renderMeta.templateSnapshot.layout.name.rotation')
+  if (typeof nameRotation !== 'number') return nameRotation
+  const nameMaxWidth = requireNumberField(nameSource.maxWidth, 'renderMeta.templateSnapshot.layout.name.maxWidth')
+  if (typeof nameMaxWidth !== 'number') return nameMaxWidth
+
+  const firstNameBoxSource = nameSource.firstNameBox
+  if (!isRecord(firstNameBoxSource)) return 'renderMeta.templateSnapshot.layout.name.firstNameBox is required'
+  const firstNameBoxWidth = requireNumberField(firstNameBoxSource.width, 'renderMeta.templateSnapshot.layout.name.firstNameBox.width')
+  if (typeof firstNameBoxWidth !== 'number') return firstNameBoxWidth
+  const firstNameBoxHeight = requireNumberField(firstNameBoxSource.height, 'renderMeta.templateSnapshot.layout.name.firstNameBox.height')
+  if (typeof firstNameBoxHeight !== 'number') return firstNameBoxHeight
+  const firstNameBoxBorderWidth = requireNumberField(firstNameBoxSource.borderWidth, 'renderMeta.templateSnapshot.layout.name.firstNameBox.borderWidth')
+  if (typeof firstNameBoxBorderWidth !== 'number') return firstNameBoxBorderWidth
+  const firstNameBoxStrokeWidth = requireNumberField(firstNameBoxSource.strokeWidth, 'renderMeta.templateSnapshot.layout.name.firstNameBox.strokeWidth')
+  if (typeof firstNameBoxStrokeWidth !== 'number') return firstNameBoxStrokeWidth
+
+  const lastNameBoxSource = nameSource.lastNameBox
+  if (!isRecord(lastNameBoxSource)) return 'renderMeta.templateSnapshot.layout.name.lastNameBox is required'
+  const lastNameBoxWidth = requireNumberField(lastNameBoxSource.width, 'renderMeta.templateSnapshot.layout.name.lastNameBox.width')
+  if (typeof lastNameBoxWidth !== 'number') return lastNameBoxWidth
+  const lastNameBoxHeight = requireNumberField(lastNameBoxSource.height, 'renderMeta.templateSnapshot.layout.name.lastNameBox.height')
+  if (typeof lastNameBoxHeight !== 'number') return lastNameBoxHeight
+  const lastNameBoxBorderWidth = requireNumberField(lastNameBoxSource.borderWidth, 'renderMeta.templateSnapshot.layout.name.lastNameBox.borderWidth')
+  if (typeof lastNameBoxBorderWidth !== 'number') return lastNameBoxBorderWidth
+  const lastNameBoxStrokeWidth = requireNumberField(lastNameBoxSource.strokeWidth, 'renderMeta.templateSnapshot.layout.name.lastNameBox.strokeWidth')
+  if (typeof lastNameBoxStrokeWidth !== 'number') return lastNameBoxStrokeWidth
+
+  const nameAnchorX = requireNumberField(nameSource.anchorX, 'renderMeta.templateSnapshot.layout.name.anchorX')
+  if (typeof nameAnchorX !== 'number') return nameAnchorX
+  const nameAnchorY = requireNumberField(nameSource.anchorY, 'renderMeta.templateSnapshot.layout.name.anchorY')
+  if (typeof nameAnchorY !== 'number') return nameAnchorY
+  const firstNameSize = requireNumberField(nameSource.firstNameSize, 'renderMeta.templateSnapshot.layout.name.firstNameSize')
+  if (typeof firstNameSize !== 'number') return firstNameSize
+  const lastNameSize = requireNumberField(nameSource.lastNameSize, 'renderMeta.templateSnapshot.layout.name.lastNameSize')
+  if (typeof lastNameSize !== 'number') return lastNameSize
+
+  const letterSpacingSource = nameSource.letterSpacing
+  if (!isRecord(letterSpacingSource)) return 'renderMeta.templateSnapshot.layout.name.letterSpacing is required'
+  const letterSpacingFirstName = requireNumberField(letterSpacingSource.firstName, 'renderMeta.templateSnapshot.layout.name.letterSpacing.firstName')
+  if (typeof letterSpacingFirstName !== 'number') return letterSpacingFirstName
+  const letterSpacingLastName = requireNumberField(letterSpacingSource.lastName, 'renderMeta.templateSnapshot.layout.name.letterSpacing.lastName')
+  if (typeof letterSpacingLastName !== 'number') return letterSpacingLastName
+
+  const leftPadding = requireNumberField(nameSource.leftPadding, 'renderMeta.templateSnapshot.layout.name.leftPadding')
+  if (typeof leftPadding !== 'number') return leftPadding
+  const rightPadding = requireNumberField(nameSource.rightPadding, 'renderMeta.templateSnapshot.layout.name.rightPadding')
+  if (typeof rightPadding !== 'number') return rightPadding
+  const boxExtension = requireNumberField(nameSource.boxExtension, 'renderMeta.templateSnapshot.layout.name.boxExtension')
+  if (typeof boxExtension !== 'number') return boxExtension
+  const textYOffset = requireNumberField(nameSource.textYOffset, 'renderMeta.templateSnapshot.layout.name.textYOffset')
+  if (typeof textYOffset !== 'number') return textYOffset
+
+  const boxOffsetsSource = nameSource.boxOffsets
+  if (!isRecord(boxOffsetsSource)) return 'renderMeta.templateSnapshot.layout.name.boxOffsets is required'
+  const boxOffsetFirstName = requireNumberField(boxOffsetsSource.firstName, 'renderMeta.templateSnapshot.layout.name.boxOffsets.firstName')
+  if (typeof boxOffsetFirstName !== 'number') return boxOffsetFirstName
+  const boxOffsetLastName = requireNumberField(boxOffsetsSource.lastName, 'renderMeta.templateSnapshot.layout.name.boxOffsets.lastName')
+  if (typeof boxOffsetLastName !== 'number') return boxOffsetLastName
+
+  const textOffsetsSource = nameSource.textOffsets
+  if (!isRecord(textOffsetsSource)) return 'renderMeta.templateSnapshot.layout.name.textOffsets is required'
+  const textOffsetFirstName = requireNumberField(textOffsetsSource.firstName, 'renderMeta.templateSnapshot.layout.name.textOffsets.firstName')
+  if (typeof textOffsetFirstName !== 'number') return textOffsetFirstName
+  const textOffsetLastName = requireNumberField(textOffsetsSource.lastName, 'renderMeta.templateSnapshot.layout.name.textOffsets.lastName')
+  if (typeof textOffsetLastName !== 'number') return textOffsetLastName
+
+  const eventBadgeSource = value.eventBadge
+  if (!isRecord(eventBadgeSource)) return 'renderMeta.templateSnapshot.layout.eventBadge is required'
+  const eventBadgeX = requireNumberField(eventBadgeSource.x, 'renderMeta.templateSnapshot.layout.eventBadge.x')
+  if (typeof eventBadgeX !== 'number') return eventBadgeX
+  const eventBadgeY = requireNumberField(eventBadgeSource.y, 'renderMeta.templateSnapshot.layout.eventBadge.y')
+  if (typeof eventBadgeY !== 'number') return eventBadgeY
+  const eventBadgeWidth = requireNumberField(eventBadgeSource.width, 'renderMeta.templateSnapshot.layout.eventBadge.width')
+  if (typeof eventBadgeWidth !== 'number') return eventBadgeWidth
+  const eventBadgeHeight = requireNumberField(eventBadgeSource.height, 'renderMeta.templateSnapshot.layout.eventBadge.height')
+  if (typeof eventBadgeHeight !== 'number') return eventBadgeHeight
+  const eventBadgeRadius = requireNumberField(eventBadgeSource.borderRadius, 'renderMeta.templateSnapshot.layout.eventBadge.borderRadius')
+  if (typeof eventBadgeRadius !== 'number') return eventBadgeRadius
+  const eventBadgeBorderWidth = requireNumberField(eventBadgeSource.borderWidth, 'renderMeta.templateSnapshot.layout.eventBadge.borderWidth')
+  if (typeof eventBadgeBorderWidth !== 'number') return eventBadgeBorderWidth
+  const eventBadgeFontSize = requireNumberField(eventBadgeSource.fontSize, 'renderMeta.templateSnapshot.layout.eventBadge.fontSize')
+  if (typeof eventBadgeFontSize !== 'number') return eventBadgeFontSize
+  const eventBadgeTextYOffset = requireNumberField(eventBadgeSource.textYOffset, 'renderMeta.templateSnapshot.layout.eventBadge.textYOffset')
+  if (typeof eventBadgeTextYOffset !== 'number') return eventBadgeTextYOffset
+
+  const positionNumberSource = value.positionNumber
+  if (!isRecord(positionNumberSource)) return 'renderMeta.templateSnapshot.layout.positionNumber is required'
+  const positionCenterX = requireNumberField(positionNumberSource.centerX, 'renderMeta.templateSnapshot.layout.positionNumber.centerX')
+  if (typeof positionCenterX !== 'number') return positionCenterX
+  const positionTopY = requireNumberField(positionNumberSource.topY, 'renderMeta.templateSnapshot.layout.positionNumber.topY')
+  if (typeof positionTopY !== 'number') return positionTopY
+  const positionFontSize = requireNumberField(positionNumberSource.positionFontSize, 'renderMeta.templateSnapshot.layout.positionNumber.positionFontSize')
+  if (typeof positionFontSize !== 'number') return positionFontSize
+  const numberFontSize = requireNumberField(positionNumberSource.numberFontSize, 'renderMeta.templateSnapshot.layout.positionNumber.numberFontSize')
+  if (typeof numberFontSize !== 'number') return numberFontSize
+  const positionLetterSpacing = requireNumberField(positionNumberSource.positionLetterSpacing, 'renderMeta.templateSnapshot.layout.positionNumber.positionLetterSpacing')
+  if (typeof positionLetterSpacing !== 'number') return positionLetterSpacing
+  const numberLetterSpacing = requireNumberField(positionNumberSource.numberLetterSpacing, 'renderMeta.templateSnapshot.layout.positionNumber.numberLetterSpacing')
+  if (typeof numberLetterSpacing !== 'number') return numberLetterSpacing
+  const positionStrokeWidth = requireNumberField(positionNumberSource.positionStrokeWidth, 'renderMeta.templateSnapshot.layout.positionNumber.positionStrokeWidth')
+  if (typeof positionStrokeWidth !== 'number') return positionStrokeWidth
+  const numberStrokeWidth = requireNumberField(positionNumberSource.numberStrokeWidth, 'renderMeta.templateSnapshot.layout.positionNumber.numberStrokeWidth')
+  if (typeof numberStrokeWidth !== 'number') return numberStrokeWidth
+  const numberXOffset = requireNumberField(positionNumberSource.numberXOffset, 'renderMeta.templateSnapshot.layout.positionNumber.numberXOffset')
+  if (typeof numberXOffset !== 'number') return numberXOffset
+
+  const teamLogoSource = value.teamLogo
+  if (!isRecord(teamLogoSource)) return 'renderMeta.templateSnapshot.layout.teamLogo is required'
+  const teamLogoX = requireNumberField(teamLogoSource.x, 'renderMeta.templateSnapshot.layout.teamLogo.x')
+  if (typeof teamLogoX !== 'number') return teamLogoX
+  const teamLogoY = requireNumberField(teamLogoSource.y, 'renderMeta.templateSnapshot.layout.teamLogo.y')
+  if (typeof teamLogoY !== 'number') return teamLogoY
+  const teamLogoMaxWidth = requireNumberField(teamLogoSource.maxWidth, 'renderMeta.templateSnapshot.layout.teamLogo.maxWidth')
+  if (typeof teamLogoMaxWidth !== 'number') return teamLogoMaxWidth
+  const teamLogoMaxHeight = requireNumberField(teamLogoSource.maxHeight, 'renderMeta.templateSnapshot.layout.teamLogo.maxHeight')
+  if (typeof teamLogoMaxHeight !== 'number') return teamLogoMaxHeight
+  const teamLogoStrokeWidth = requireNumberField(teamLogoSource.strokeWidth, 'renderMeta.templateSnapshot.layout.teamLogo.strokeWidth')
+  if (typeof teamLogoStrokeWidth !== 'number') return teamLogoStrokeWidth
+  const teamLogoStrokeColor = requireStringField(teamLogoSource.strokeColor)
+  if (!teamLogoStrokeColor) return 'renderMeta.templateSnapshot.layout.teamLogo.strokeColor is required'
+
+  const bottomBarSource = value.bottomBar
+  if (!isRecord(bottomBarSource)) return 'renderMeta.templateSnapshot.layout.bottomBar is required'
+  const bottomBarY = requireNumberField(bottomBarSource.y, 'renderMeta.templateSnapshot.layout.bottomBar.y')
+  if (typeof bottomBarY !== 'number') return bottomBarY
+  const bottomBarHeight = requireNumberField(bottomBarSource.height, 'renderMeta.templateSnapshot.layout.bottomBar.height')
+  if (typeof bottomBarHeight !== 'number') return bottomBarHeight
+  const bottomBarTextYOffset = requireNumberField(bottomBarSource.textYOffset, 'renderMeta.templateSnapshot.layout.bottomBar.textYOffset')
+  if (typeof bottomBarTextYOffset !== 'number') return bottomBarTextYOffset
+
+  const cameraIconSource = bottomBarSource.cameraIcon
+  if (!isRecord(cameraIconSource)) return 'renderMeta.templateSnapshot.layout.bottomBar.cameraIcon is required'
+  const cameraIconX = requireNumberField(cameraIconSource.x, 'renderMeta.templateSnapshot.layout.bottomBar.cameraIcon.x')
+  if (typeof cameraIconX !== 'number') return cameraIconX
+  const cameraIconY = requireNumberField(cameraIconSource.y, 'renderMeta.templateSnapshot.layout.bottomBar.cameraIcon.y')
+  if (typeof cameraIconY !== 'number') return cameraIconY
+  const cameraIconWidth = requireNumberField(cameraIconSource.width, 'renderMeta.templateSnapshot.layout.bottomBar.cameraIcon.width')
+  if (typeof cameraIconWidth !== 'number') return cameraIconWidth
+  const cameraIconHeight = requireNumberField(cameraIconSource.height, 'renderMeta.templateSnapshot.layout.bottomBar.cameraIcon.height')
+  if (typeof cameraIconHeight !== 'number') return cameraIconHeight
+
+  const bottomBarPhotographerX = requireNumberField(bottomBarSource.photographerX, 'renderMeta.templateSnapshot.layout.bottomBar.photographerX')
+  if (typeof bottomBarPhotographerX !== 'number') return bottomBarPhotographerX
+  const bottomBarRarityX = requireNumberField(bottomBarSource.rarityX, 'renderMeta.templateSnapshot.layout.bottomBar.rarityX')
+  if (typeof bottomBarRarityX !== 'number') return bottomBarRarityX
+  const bottomBarRaritySize = requireNumberField(bottomBarSource.raritySize, 'renderMeta.templateSnapshot.layout.bottomBar.raritySize')
+  if (typeof bottomBarRaritySize !== 'number') return bottomBarRaritySize
+  const bottomBarRarityGap = requireNumberField(bottomBarSource.rarityGap, 'renderMeta.templateSnapshot.layout.bottomBar.rarityGap')
+  if (typeof bottomBarRarityGap !== 'number') return bottomBarRarityGap
+  const bottomBarTeamNameX = requireNumberField(bottomBarSource.teamNameX, 'renderMeta.templateSnapshot.layout.bottomBar.teamNameX')
+  if (typeof bottomBarTeamNameX !== 'number') return bottomBarTeamNameX
+  const bottomBarFontSize = requireNumberField(bottomBarSource.fontSize, 'renderMeta.templateSnapshot.layout.bottomBar.fontSize')
+  if (typeof bottomBarFontSize !== 'number') return bottomBarFontSize
+
+  const bottomBarLetterSpacingSource = bottomBarSource.letterSpacing
+  if (!isRecord(bottomBarLetterSpacingSource)) return 'renderMeta.templateSnapshot.layout.bottomBar.letterSpacing is required'
+  const bottomBarPhotographerSpacing = requireNumberField(bottomBarLetterSpacingSource.photographer, 'renderMeta.templateSnapshot.layout.bottomBar.letterSpacing.photographer')
+  if (typeof bottomBarPhotographerSpacing !== 'number') return bottomBarPhotographerSpacing
+  const bottomBarTeamSpacing = requireNumberField(bottomBarLetterSpacingSource.teamName, 'renderMeta.templateSnapshot.layout.bottomBar.letterSpacing.teamName')
+  if (typeof bottomBarTeamSpacing !== 'number') return bottomBarTeamSpacing
+
+  const rareCardSource = value.rareCard
+  if (!isRecord(rareCardSource)) return 'renderMeta.templateSnapshot.layout.rareCard is required'
+  const rareCardRotation = requireNumberField(rareCardSource.rotation, 'renderMeta.templateSnapshot.layout.rareCard.rotation')
+  if (typeof rareCardRotation !== 'number') return rareCardRotation
+  const rareCardAnchorX = requireNumberField(rareCardSource.anchorX, 'renderMeta.templateSnapshot.layout.rareCard.anchorX')
+  if (typeof rareCardAnchorX !== 'number') return rareCardAnchorX
+  const rareCardAnchorY = requireNumberField(rareCardSource.anchorY, 'renderMeta.templateSnapshot.layout.rareCard.anchorY')
+  if (typeof rareCardAnchorY !== 'number') return rareCardAnchorY
+  const rareCardMaxWidth = requireNumberField(rareCardSource.maxWidth, 'renderMeta.templateSnapshot.layout.rareCard.maxWidth')
+  if (typeof rareCardMaxWidth !== 'number') return rareCardMaxWidth
+  const rareCardTitleOffsetX = requireNumberField(rareCardSource.titleTextOffsetX, 'renderMeta.templateSnapshot.layout.rareCard.titleTextOffsetX')
+  if (typeof rareCardTitleOffsetX !== 'number') return rareCardTitleOffsetX
+  const rareCardCaptionOffsetX = requireNumberField(rareCardSource.captionTextOffsetX, 'renderMeta.templateSnapshot.layout.rareCard.captionTextOffsetX')
+  if (typeof rareCardCaptionOffsetX !== 'number') return rareCardCaptionOffsetX
+  const rareCardTitleLetterSpacing = requireNumberField(rareCardSource.titleLetterSpacing, 'renderMeta.templateSnapshot.layout.rareCard.titleLetterSpacing')
+  if (typeof rareCardTitleLetterSpacing !== 'number') return rareCardTitleLetterSpacing
+  const rareCardCaptionLetterSpacing = requireNumberField(rareCardSource.captionLetterSpacing, 'renderMeta.templateSnapshot.layout.rareCard.captionLetterSpacing')
+  if (typeof rareCardCaptionLetterSpacing !== 'number') return rareCardCaptionLetterSpacing
+
+  const superRareSource = value.superRare
+  if (!isRecord(superRareSource)) return 'renderMeta.templateSnapshot.layout.superRare is required'
+  const superRareCenterX = requireNumberField(superRareSource.centerX, 'renderMeta.templateSnapshot.layout.superRare.centerX')
+  if (typeof superRareCenterX !== 'number') return superRareCenterX
+  const superRareFirstNameY = requireNumberField(superRareSource.firstNameY, 'renderMeta.templateSnapshot.layout.superRare.firstNameY')
+  if (typeof superRareFirstNameY !== 'number') return superRareFirstNameY
+  const superRareLastNameY = requireNumberField(superRareSource.lastNameY, 'renderMeta.templateSnapshot.layout.superRare.lastNameY')
+  if (typeof superRareLastNameY !== 'number') return superRareLastNameY
+  const superRareFirstNameSize = requireNumberField(superRareSource.firstNameSize, 'renderMeta.templateSnapshot.layout.superRare.firstNameSize')
+  if (typeof superRareFirstNameSize !== 'number') return superRareFirstNameSize
+  const superRareLastNameSize = requireNumberField(superRareSource.lastNameSize, 'renderMeta.templateSnapshot.layout.superRare.lastNameSize')
+  if (typeof superRareLastNameSize !== 'number') return superRareLastNameSize
+
+  const nationalTeamSource = value.nationalTeam
+  if (!isRecord(nationalTeamSource)) return 'renderMeta.templateSnapshot.layout.nationalTeam is required'
+  const nationalRotation = requireNumberField(nationalTeamSource.rotation, 'renderMeta.templateSnapshot.layout.nationalTeam.rotation')
+  if (typeof nationalRotation !== 'number') return nationalRotation
+  const nationalAnchorX = requireNumberField(nationalTeamSource.anchorX, 'renderMeta.templateSnapshot.layout.nationalTeam.anchorX')
+  if (typeof nationalAnchorX !== 'number') return nationalAnchorX
+  const nationalAnchorY = requireNumberField(nationalTeamSource.anchorY, 'renderMeta.templateSnapshot.layout.nationalTeam.anchorY')
+  if (typeof nationalAnchorY !== 'number') return nationalAnchorY
+  const nationalBoxWidth = requireNumberField(nationalTeamSource.boxWidth, 'renderMeta.templateSnapshot.layout.nationalTeam.boxWidth')
+  if (typeof nationalBoxWidth !== 'number') return nationalBoxWidth
+  const nationalBoxHeight = requireNumberField(nationalTeamSource.boxHeight, 'renderMeta.templateSnapshot.layout.nationalTeam.boxHeight')
+  if (typeof nationalBoxHeight !== 'number') return nationalBoxHeight
+  const nationalBoxBorderWidth = requireNumberField(nationalTeamSource.boxBorderWidth, 'renderMeta.templateSnapshot.layout.nationalTeam.boxBorderWidth')
+  if (typeof nationalBoxBorderWidth !== 'number') return nationalBoxBorderWidth
+  const nationalTextPaddingX = requireNumberField(nationalTeamSource.textPaddingX, 'renderMeta.templateSnapshot.layout.nationalTeam.textPaddingX')
+  if (typeof nationalTextPaddingX !== 'number') return nationalTextPaddingX
+  const nationalNameFontSize = requireNumberField(nationalTeamSource.nameFontSize, 'renderMeta.templateSnapshot.layout.nationalTeam.nameFontSize')
+  if (typeof nationalNameFontSize !== 'number') return nationalNameFontSize
+  const nationalDefaultTeamName = requireStringField(nationalTeamSource.defaultTeamName)
+  if (!nationalDefaultTeamName) return 'renderMeta.templateSnapshot.layout.nationalTeam.defaultTeamName is required'
+
+  const nationalLogoSource = nationalTeamSource.logo
+  if (!isRecord(nationalLogoSource)) return 'renderMeta.templateSnapshot.layout.nationalTeam.logo is required'
+  const nationalLogoX = requireNumberField(nationalLogoSource.x, 'renderMeta.templateSnapshot.layout.nationalTeam.logo.x')
+  if (typeof nationalLogoX !== 'number') return nationalLogoX
+  const nationalLogoY = requireNumberField(nationalLogoSource.y, 'renderMeta.templateSnapshot.layout.nationalTeam.logo.y')
+  if (typeof nationalLogoY !== 'number') return nationalLogoY
+  const nationalLogoMaxWidth = requireNumberField(nationalLogoSource.maxWidth, 'renderMeta.templateSnapshot.layout.nationalTeam.logo.maxWidth')
+  if (typeof nationalLogoMaxWidth !== 'number') return nationalLogoMaxWidth
+  const nationalLogoMaxHeight = requireNumberField(nationalLogoSource.maxHeight, 'renderMeta.templateSnapshot.layout.nationalTeam.logo.maxHeight')
+  if (typeof nationalLogoMaxHeight !== 'number') return nationalLogoMaxHeight
+
+  return {
+    kind: 'usqc26-v1',
+    palette,
+    typography: {
+      fontFamily,
+    },
+    frame: {
+      outerRadius,
+      innerX,
+      innerY,
+      innerWidth,
+      innerHeight,
+      innerRadius,
+    },
+    name: {
+      rotation: nameRotation,
+      maxWidth: nameMaxWidth,
+      firstNameBox: {
+        width: firstNameBoxWidth,
+        height: firstNameBoxHeight,
+        borderWidth: firstNameBoxBorderWidth,
+        strokeWidth: firstNameBoxStrokeWidth,
+      },
+      lastNameBox: {
+        width: lastNameBoxWidth,
+        height: lastNameBoxHeight,
+        borderWidth: lastNameBoxBorderWidth,
+        strokeWidth: lastNameBoxStrokeWidth,
+      },
+      anchorX: nameAnchorX,
+      anchorY: nameAnchorY,
+      firstNameSize,
+      lastNameSize,
+      letterSpacing: {
+        firstName: letterSpacingFirstName,
+        lastName: letterSpacingLastName,
+      },
+      leftPadding,
+      rightPadding,
+      boxExtension,
+      textYOffset,
+      boxOffsets: {
+        firstName: boxOffsetFirstName,
+        lastName: boxOffsetLastName,
+      },
+      textOffsets: {
+        firstName: textOffsetFirstName,
+        lastName: textOffsetLastName,
+      },
+    },
+    eventBadge: {
+      x: eventBadgeX,
+      y: eventBadgeY,
+      width: eventBadgeWidth,
+      height: eventBadgeHeight,
+      borderRadius: eventBadgeRadius,
+      borderWidth: eventBadgeBorderWidth,
+      fontSize: eventBadgeFontSize,
+      textYOffset: eventBadgeTextYOffset,
+    },
+    positionNumber: {
+      centerX: positionCenterX,
+      topY: positionTopY,
+      positionFontSize,
+      numberFontSize,
+      positionLetterSpacing,
+      numberLetterSpacing,
+      positionStrokeWidth,
+      numberStrokeWidth,
+      numberXOffset,
+    },
+    teamLogo: {
+      x: teamLogoX,
+      y: teamLogoY,
+      maxWidth: teamLogoMaxWidth,
+      maxHeight: teamLogoMaxHeight,
+      strokeWidth: teamLogoStrokeWidth,
+      strokeColor: teamLogoStrokeColor,
+    },
+    bottomBar: {
+      y: bottomBarY,
+      height: bottomBarHeight,
+      textYOffset: bottomBarTextYOffset,
+      cameraIcon: {
+        x: cameraIconX,
+        y: cameraIconY,
+        width: cameraIconWidth,
+        height: cameraIconHeight,
+      },
+      photographerX: bottomBarPhotographerX,
+      rarityX: bottomBarRarityX,
+      raritySize: bottomBarRaritySize,
+      rarityGap: bottomBarRarityGap,
+      teamNameX: bottomBarTeamNameX,
+      fontSize: bottomBarFontSize,
+      letterSpacing: {
+        photographer: bottomBarPhotographerSpacing,
+        teamName: bottomBarTeamSpacing,
+      },
+    },
+    rareCard: {
+      rotation: rareCardRotation,
+      anchorX: rareCardAnchorX,
+      anchorY: rareCardAnchorY,
+      maxWidth: rareCardMaxWidth,
+      titleTextOffsetX: rareCardTitleOffsetX,
+      captionTextOffsetX: rareCardCaptionOffsetX,
+      titleLetterSpacing: rareCardTitleLetterSpacing,
+      captionLetterSpacing: rareCardCaptionLetterSpacing,
+    },
+    superRare: {
+      centerX: superRareCenterX,
+      firstNameY: superRareFirstNameY,
+      lastNameY: superRareLastNameY,
+      firstNameSize: superRareFirstNameSize,
+      lastNameSize: superRareLastNameSize,
+    },
+    nationalTeam: {
+      rotation: nationalRotation,
+      anchorX: nationalAnchorX,
+      anchorY: nationalAnchorY,
+      boxWidth: nationalBoxWidth,
+      boxHeight: nationalBoxHeight,
+      boxBorderWidth: nationalBoxBorderWidth,
+      textPaddingX: nationalTextPaddingX,
+      nameFontSize: nationalNameFontSize,
+      defaultTeamName: nationalDefaultTeamName,
+      logo: {
+        x: nationalLogoX,
+        y: nationalLogoY,
+        maxWidth: nationalLogoMaxWidth,
+        maxHeight: nationalLogoMaxHeight,
+      },
+    },
+  }
+}
+
+const parseTemplateLayout = (value: unknown): TemplateLayout | string => {
+  if (!isRecord(value)) return 'renderMeta.templateSnapshot.layout is required'
+  const kind = normalizeString(value.kind)
+  if (kind !== 'usqc26-v1') return 'renderMeta.templateSnapshot.layout.kind is invalid'
+  return parseUsqc26Layout(value)
+}
+
 const parseRenderMeta = (value: unknown, renderKey: string): RenderMeta | string => {
   if (!isRecord(value)) return 'renderMeta must be an object'
 
@@ -291,6 +719,9 @@ const parseRenderMeta = (value: unknown, renderKey: string): RenderMeta | string
     return 'renderMeta.templateSnapshot.overlayPlacement is invalid'
   }
 
+  const layout = parseTemplateLayout(snapshot.layout)
+  if (typeof layout === 'string') return layout
+
   return {
     key,
     templateId,
@@ -300,6 +731,7 @@ const parseRenderMeta = (value: unknown, renderKey: string): RenderMeta | string
       theme,
       flags,
       overlayPlacement,
+      layout,
     },
   }
 }

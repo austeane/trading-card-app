@@ -2,10 +2,9 @@ import {
   CARD_HEIGHT,
   CARD_WIDTH,
   TRIM_BOX,
-  USQC26_COLORS,
-  USQC26_LAYOUT,
   findTemplate,
   resolveTemplateId,
+  resolveTemplateLayout,
   type Card,
   type CropRect,
   type RenderMeta,
@@ -13,23 +12,12 @@ import {
   type TemplateFlags,
   type TemplateTheme,
   type TournamentConfig,
+  type TemplateLayout,
+  type Usqc26LayoutV1,
 } from 'shared'
 
 // Camera icon for bottom bar
 import cameraIconUrl from './assets/icons/camera.png'
-
-// Font family for USQC26 design
-const FONT_AMIFER = '"Amifer", "Avenir Next", "Helvetica Neue", sans-serif'
-
-// Frame dimensions from Figma (node 6:44 SVG path)
-const FRAME = {
-  outerRadius: 0, // Full bleed, no outer radius
-  innerX: 56,
-  innerY: 91,
-  innerWidth: 713,
-  innerHeight: 937,
-  innerRadius: 29,
-}
 
 const BASE_THEME: TemplateTheme = {
   gradientStart: 'rgba(15, 23, 42, 0)',
@@ -84,6 +72,7 @@ export const resolveTemplateSnapshot = (input: {
   const theme = { ...BASE_THEME, ...(template.theme ?? {}) }
   const flags = { ...DEFAULT_TEMPLATE_FLAGS, ...(template.flags ?? {}) }
   const overlayPlacement = template.overlayPlacement ?? 'belowText'
+  const layout = resolveTemplateLayout(template)
 
   return {
     templateId: effectiveTemplateId,
@@ -92,6 +81,7 @@ export const resolveTemplateSnapshot = (input: {
       theme,
       flags,
       overlayPlacement,
+      layout,
     },
   }
 }
@@ -113,6 +103,13 @@ async function loadImageSafe(url?: string | null) {
   } catch {
     return null
   }
+}
+
+const asUsqc26Layout = (layout: TemplateLayout): Usqc26LayoutV1 => {
+  if (layout.kind !== 'usqc26-v1') {
+    throw new Error(`Unsupported layout kind: ${layout.kind}`)
+  }
+  return layout
 }
 
 function drawCroppedImage(
@@ -165,7 +162,8 @@ function roundedRect(
   ctx.closePath()
 }
 
-function drawFrame(ctx: CanvasRenderingContext2D) {
+function drawFrame(ctx: CanvasRenderingContext2D, layout: Usqc26LayoutV1) {
+  const { frame, palette } = layout
   // Draw the frame overlay (white border with inner cutout)
   ctx.save()
 
@@ -175,7 +173,7 @@ function drawFrame(ctx: CanvasRenderingContext2D) {
   ctx.rect(0, 0, CARD_WIDTH, CARD_HEIGHT)
 
   // Inner rounded rectangle (cutout) - draw counter-clockwise
-  const { innerX, innerY, innerWidth, innerHeight, innerRadius } = FRAME
+  const { innerX, innerY, innerWidth, innerHeight, innerRadius } = frame
   ctx.moveTo(innerX + innerRadius, innerY)
   ctx.lineTo(innerX + innerWidth - innerRadius, innerY)
   ctx.quadraticCurveTo(innerX + innerWidth, innerY, innerX + innerWidth, innerY + innerRadius)
@@ -187,30 +185,31 @@ function drawFrame(ctx: CanvasRenderingContext2D) {
   ctx.quadraticCurveTo(innerX, innerY, innerX + innerRadius, innerY)
   ctx.closePath()
 
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.fillStyle = palette.white
   ctx.fill('evenodd')
 
   ctx.restore()
 }
 
-function drawEventBadge(ctx: CanvasRenderingContext2D, text: string) {
-  const { x, y, width, height, borderRadius, borderWidth, fontSize, textYOffset } = USQC26_LAYOUT.eventBadge
+function drawEventBadge(ctx: CanvasRenderingContext2D, text: string, layout: Usqc26LayoutV1) {
+  const { eventBadge, palette, typography } = layout
+  const { x, y, width, height, borderRadius, borderWidth, fontSize, textYOffset } = eventBadge
 
   ctx.save()
 
   // Badge background
   roundedRect(ctx, x, y, width, height, borderRadius)
-  ctx.fillStyle = USQC26_COLORS.secondary
+  ctx.fillStyle = palette.secondary
   ctx.fill()
 
   // Badge border
-  ctx.strokeStyle = USQC26_COLORS.primary
+  ctx.strokeStyle = palette.primary
   ctx.lineWidth = borderWidth
   ctx.stroke()
 
   // Badge text
-  ctx.font = `700 ${fontSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.font = `700 ${fontSize}px ${typography.fontFamily}`
+  ctx.fillStyle = palette.primary
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, x + width / 2, y + height / 2 + textYOffset)
@@ -218,7 +217,8 @@ function drawEventBadge(ctx: CanvasRenderingContext2D, text: string) {
   ctx.restore()
 }
 
-function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, number?: string) {
+function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, number: string | undefined, layout: Usqc26LayoutV1) {
+  const { positionNumber, palette, typography } = layout
   const {
     centerX,
     topY,
@@ -229,7 +229,7 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
     positionStrokeWidth,
     numberStrokeWidth,
     numberXOffset,
-  } = USQC26_LAYOUT.positionNumber
+  } = positionNumber
 
   ctx.save()
   ctx.textAlign = 'center'
@@ -238,14 +238,14 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
   ctx.miterLimit = 2
 
   // Position label - #1B4278 fill with #FFFFFF stroke
-  ctx.font = `500 ${positionFontSize}px ${FONT_AMIFER}`
+  ctx.font = `500 ${positionFontSize}px ${typography.fontFamily}`
   ctx.letterSpacing = `${positionLetterSpacing}px`
   // Draw stroke first (underneath)
-  ctx.strokeStyle = USQC26_COLORS.white
+  ctx.strokeStyle = palette.white
   ctx.lineWidth = positionStrokeWidth
   ctx.strokeText(position.toUpperCase(), centerX, topY)
   // Then fill
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.fillStyle = palette.primary
   ctx.fillText(position.toUpperCase(), centerX, topY)
 
   // Only draw jersey number if provided
@@ -254,14 +254,14 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
     const numberY = topY + positionFontSize
 
     // Jersey number - #FFFFFF 67% opaque fill with #1B4278 stroke
-    ctx.font = `500 ${numberFontSize}px ${FONT_AMIFER}`
+    ctx.font = `500 ${numberFontSize}px ${typography.fontFamily}`
     ctx.letterSpacing = `${numberLetterSpacing}px`
     // Draw stroke first (underneath)
-    ctx.strokeStyle = USQC26_COLORS.primary
+    ctx.strokeStyle = palette.primary
     ctx.lineWidth = numberStrokeWidth
     ctx.strokeText(number, centerX + numberXOffset, numberY)
     // Then fill with white 67% opacity
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.67)'
+    ctx.fillStyle = palette.numberOverlay
     ctx.fillText(number, centerX + numberXOffset, numberY)
   }
 
@@ -274,7 +274,8 @@ function drawLogo(
   x: number,
   y: number,
   maxWidth: number,
-  maxHeight: number
+  maxHeight: number,
+  layout: Usqc26LayoutV1
 ) {
   const ratio = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
   const width = img.naturalWidth * ratio
@@ -284,7 +285,7 @@ function drawLogo(
 
   // Draw 1px white outside stroke by drawing the logo slightly larger in white first
   // Using an offscreen canvas to create the stroke effect
-  const strokeWidth = 1
+  const strokeWidth = layout.teamLogo.strokeWidth
   const offscreen = document.createElement('canvas')
   offscreen.width = Math.ceil(width + strokeWidth * 2)
   offscreen.height = Math.ceil(height + strokeWidth * 2)
@@ -296,7 +297,7 @@ function drawLogo(
 
     // Create white stroke by drawing the logo's silhouette
     offCtx.globalCompositeOperation = 'source-in'
-    offCtx.fillStyle = USQC26_COLORS.white
+    offCtx.fillStyle = layout.teamLogo.strokeColor
     offCtx.fillRect(0, 0, offscreen.width, offscreen.height)
 
     // Draw the white silhouette offset in all directions to create stroke effect
@@ -314,12 +315,6 @@ function drawLogo(
 
   ctx.restore()
 }
-
-// Max width for name text before wrapping to second line
-const NAME_MAX_WIDTH = 550
-
-// Max width for rare card text (anchorX minus left frame edge minus some padding)
-const RARE_CARD_MAX_WIDTH = 754 - FRAME.innerX - 20  // ~678px
 
 // Helper to wrap text into lines that fit within maxWidth
 // Handles spaces, hyphens, and forces breaks on long single words
@@ -393,10 +388,13 @@ function wrapText(
 function drawAngledNameBoxes(
   ctx: CanvasRenderingContext2D,
   firstName: string,
-  lastName: string
+  lastName: string,
+  layout: Usqc26LayoutV1
 ) {
+  const { name, palette, typography } = layout
   const {
     rotation,
+    maxWidth,
     firstNameBox,
     lastNameBox,
     firstNameSize,
@@ -408,26 +406,28 @@ function drawAngledNameBoxes(
     rightPadding,
     boxExtension,
     textYOffset,
-  } = USQC26_LAYOUT.name
+    boxOffsets,
+    textOffsets,
+  } = name
   const radians = (rotation * Math.PI) / 180
 
   ctx.save()
 
   // Measure and wrap text for last name
-  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
+  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
   ctx.letterSpacing = `${letterSpacing.lastName}px`
   const lastNameText = lastName.toUpperCase()
-  const lastNameLines = wrapText(ctx, lastNameText, NAME_MAX_WIDTH)
+  const lastNameLines = wrapText(ctx, lastNameText, maxWidth)
   const lastNameMaxWidth = Math.max(...lastNameLines.map(line => ctx.measureText(line).width))
   const lnBoxWidth = lastNameMaxWidth + leftPadding + rightPadding + boxExtension
   const lnLineHeight = lastNameSize * 1.1
   const lnBoxHeight = lastNameBox.height + (lastNameLines.length - 1) * lnLineHeight
 
   // Measure and wrap text for first name
-  ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
+  ctx.font = `500 italic ${firstNameSize}px ${typography.fontFamily}`
   ctx.letterSpacing = `${letterSpacing.firstName}px`
   const firstNameText = firstName.toUpperCase()
-  const firstNameLines = wrapText(ctx, firstNameText, NAME_MAX_WIDTH)
+  const firstNameLines = wrapText(ctx, firstNameText, maxWidth)
   const firstNameMaxWidth = Math.max(...firstNameLines.map(line => ctx.measureText(line).width))
   const fnBoxWidth = firstNameMaxWidth + leftPadding + rightPadding + boxExtension
   const fnLineHeight = firstNameSize * 1.1
@@ -438,10 +438,10 @@ function drawAngledNameBoxes(
   ctx.rotate(radians)
 
   // X-offset adjustments for fine-tuning positions (box and text separately)
-  const fnBoxXOffset = 8   // First name box offset (12 - 4 = 8)
-  const fnTextXOffset = 12 // First name text offset (unchanged)
-  const lnBoxXOffset = 3   // Last name box offset (10 - 7 = 3)
-  const lnTextXOffset = 10 // Last name text offset (unchanged)
+  const fnBoxXOffset = boxOffsets.firstName
+  const lnBoxXOffset = boxOffsets.lastName
+  const fnTextXOffset = textOffsets.firstName
+  const lnTextXOffset = textOffsets.lastName
 
   // Last name box Y position (top edge stays fixed at original position)
   // Original: lnBoxY = -lastNameBox.height / 2
@@ -453,15 +453,15 @@ function drawAngledNameBoxes(
   const fnBoxY = lnBoxY - fnBoxHeight
 
   // Draw first name box FIRST (light blue with white border) - so last name box overlaps on top
-  ctx.fillStyle = USQC26_COLORS.secondary
+  ctx.fillStyle = palette.secondary
   ctx.fillRect(-fnBoxWidth + boxExtension + fnBoxXOffset, fnBoxY, fnBoxWidth, fnBoxHeight)
-  ctx.strokeStyle = USQC26_COLORS.white
+  ctx.strokeStyle = palette.white
   ctx.lineWidth = firstNameBox.borderWidth
   ctx.strokeRect(-fnBoxWidth + boxExtension + fnBoxXOffset, fnBoxY, fnBoxWidth, fnBoxHeight)
 
   // Draw first name text (dark blue with white stroke)
   // Bottom-justified: text lines are positioned from the bottom up
-  ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
+  ctx.font = `500 italic ${firstNameSize}px ${typography.fontFamily}`
   ctx.letterSpacing = `${letterSpacing.firstName}px`
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
@@ -480,24 +480,24 @@ function drawAngledNameBoxes(
     const lineText = firstNameLines[lineIndex]
 
     // Draw white stroke first
-    ctx.strokeStyle = USQC26_COLORS.white
+    ctx.strokeStyle = palette.white
     ctx.lineWidth = firstNameBox.strokeWidth
     ctx.strokeText(lineText, -rightPadding + fnTextXOffset, lineY)
     // Then fill with primary color
-    ctx.fillStyle = USQC26_COLORS.primary
+    ctx.fillStyle = palette.primary
     ctx.fillText(lineText, -rightPadding + fnTextXOffset, lineY)
   }
 
   // Draw last name box ON TOP (white with light blue border)
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.fillStyle = palette.white
   ctx.fillRect(-lnBoxWidth + boxExtension + lnBoxXOffset, lnBoxY, lnBoxWidth, lnBoxHeight)
-  ctx.strokeStyle = USQC26_COLORS.secondary
+  ctx.strokeStyle = palette.secondary
   ctx.lineWidth = lastNameBox.borderWidth
   ctx.strokeRect(-lnBoxWidth + boxExtension + lnBoxXOffset, lnBoxY, lnBoxWidth, lnBoxHeight)
 
   // Draw last name text (white with #1B4278 stroke)
   // Top-justified: text lines are positioned from the top down
-  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
+  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
   ctx.letterSpacing = `${letterSpacing.lastName}px`
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
@@ -514,11 +514,11 @@ function drawAngledNameBoxes(
     const lineText = lastNameLines[i]
 
     // Draw primary color stroke first
-    ctx.strokeStyle = USQC26_COLORS.primary
+    ctx.strokeStyle = palette.primary
     ctx.lineWidth = lastNameBox.strokeWidth
     ctx.strokeText(lineText, -rightPadding + lnTextXOffset, lineY)
     // Then fill with white
-    ctx.fillStyle = USQC26_COLORS.white
+    ctx.fillStyle = palette.white
     ctx.fillText(lineText, -rightPadding + lnTextXOffset, lineY)
   }
 
@@ -529,15 +529,17 @@ function drawBottomBar(
   ctx: CanvasRenderingContext2D,
   photographer: string,
   teamName: string,
+  layout: Usqc26LayoutV1,
   rarity: 'common' | 'uncommon' | 'rare' | 'super-rare' = 'common',
   cameraImg?: HTMLImageElement | null
 ) {
-  const { y, textYOffset, cameraIcon, photographerX, rarityX, raritySize, teamNameX, fontSize, letterSpacing } = USQC26_LAYOUT.bottomBar
+  const { bottomBar, palette, typography } = layout
+  const { y, textYOffset, cameraIcon, photographerX, rarityX, raritySize, rarityGap, teamNameX, fontSize, letterSpacing } = bottomBar
   const textY = y + textYOffset
 
   ctx.save()
-  ctx.font = `500 ${fontSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.font = `500 ${fontSize}px ${typography.fontFamily}`
+  ctx.fillStyle = palette.primary
   ctx.textBaseline = 'middle'
 
   // Camera icon - tint white PNG to primary color
@@ -552,26 +554,26 @@ function drawBottomBar(
       offCtx.drawImage(cameraImg, 0, 0, cameraIcon.width, cameraIcon.height)
       // Tint it with the primary color using source-in composite
       offCtx.globalCompositeOperation = 'source-in'
-      offCtx.fillStyle = USQC26_COLORS.primary
+      offCtx.fillStyle = palette.primary
       offCtx.fillRect(0, 0, cameraIcon.width, cameraIcon.height)
       // Draw the tinted icon onto the main canvas
       ctx.drawImage(offscreen, cameraIcon.x, cameraIcon.y)
     }
   } else {
     // Fallback rectangle if image not loaded
-    ctx.fillStyle = USQC26_COLORS.primary
+    ctx.fillStyle = palette.primary
     roundedRect(ctx, cameraIcon.x, cameraIcon.y, cameraIcon.width, cameraIcon.height, 2)
     ctx.fill()
   }
 
   // Photographer name
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.fillStyle = palette.primary
   ctx.textAlign = 'left'
   ctx.letterSpacing = `${letterSpacing.photographer}px`
   ctx.fillText(photographer.toUpperCase(), photographerX, textY)
 
   // Rarity indicator
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.fillStyle = palette.primary
   if (rarity === 'common' || rarity === 'uncommon') {
     // Circle for common/uncommon
     ctx.beginPath()
@@ -583,7 +585,7 @@ function drawBottomBar(
     ctx.fill()
     if (rarity === 'super-rare') {
       // Second star for super-rare
-      drawStar(ctx, rarityX + raritySize / 2 + raritySize + 4, y + 13, raritySize / 2, 5)
+      drawStar(ctx, rarityX + raritySize / 2 + raritySize + rarityGap, y + 13, raritySize / 2, 5)
       ctx.fill()
     }
   }
@@ -610,36 +612,74 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius:
   ctx.closePath()
 }
 
+function drawGradientOverlay(ctx: CanvasRenderingContext2D, theme: TemplateTheme) {
+  ctx.save()
+  const gradient = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT)
+  gradient.addColorStop(0, theme.gradientStart)
+  gradient.addColorStop(1, theme.gradientEnd)
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+  ctx.restore()
+}
+
+function drawBorders(ctx: CanvasRenderingContext2D, theme: TemplateTheme) {
+  ctx.save()
+  ctx.strokeStyle = theme.border
+  ctx.lineWidth = 1
+  ctx.strokeRect(TRIM_BOX.x, TRIM_BOX.y, TRIM_BOX.w, TRIM_BOX.h)
+  ctx.restore()
+}
+
+function drawOverlay(ctx: CanvasRenderingContext2D, overlayImg: HTMLImageElement) {
+  ctx.save()
+  ctx.drawImage(overlayImg, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+  ctx.restore()
+}
+
+function drawWatermarkJersey(
+  ctx: CanvasRenderingContext2D,
+  jerseyNumber: string | undefined,
+  theme: TemplateTheme,
+  layout: Usqc26LayoutV1
+) {
+  if (!jerseyNumber) return
+  ctx.save()
+  ctx.font = `700 240px ${layout.typography.fontFamily}`
+  ctx.fillStyle = theme.watermark
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(jerseyNumber, CARD_WIDTH / 2, CARD_HEIGHT / 2)
+  ctx.restore()
+}
+
 function drawRareCardContent(
   ctx: CanvasRenderingContext2D,
   title: string,
-  caption: string
+  caption: string,
+  layout: Usqc26LayoutV1
 ) {
-  const { rotation } = USQC26_LAYOUT.rareCard
+  const { rareCard, name, palette, typography } = layout
+  const { rotation, anchorX, anchorY, maxWidth, titleTextOffsetX, captionTextOffsetX, titleLetterSpacing, captionLetterSpacing } = rareCard
   // Use name styling and positioning for consistent look
   const {
     lastNameSize,
     firstNameSize,
     lastNameBox,
     firstNameBox,
-    anchorX,
     leftPadding,
     rightPadding,
     boxExtension,
     textYOffset,
-  } = USQC26_LAYOUT.name
+  } = name
   const radians = (rotation * Math.PI) / 180
 
   // Use same text offsets as name boxes
-  const titleTextXOffset = 10   // Same as lnTextXOffset
-  const captionTextXOffset = 12 // Same as fnTextXOffset
-
   ctx.save()
 
   // Measure and wrap title text (allow many lines, constrain to frame width)
-  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
-  ctx.letterSpacing = '0px'
-  const titleLines = wrapText(ctx, title, RARE_CARD_MAX_WIDTH, 10)
+  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
+  ctx.letterSpacing = `${titleLetterSpacing}px`
+  const titleLines = wrapText(ctx, title, maxWidth, 10)
   const titleMaxWidth = Math.max(...titleLines.map(line => ctx.measureText(line).width))
   const titleBoxWidth = titleMaxWidth + leftPadding + rightPadding + boxExtension
   const titleLineHeight = lastNameSize * 1.1
@@ -651,8 +691,9 @@ function drawRareCardContent(
   let captionLineHeight = 0
   let captionBoxHeight = firstNameBox.height
   if (caption) {
-    ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
-    captionLines = wrapText(ctx, caption, RARE_CARD_MAX_WIDTH, 10)
+    ctx.font = `500 italic ${firstNameSize}px ${typography.fontFamily}`
+    ctx.letterSpacing = `${captionLetterSpacing}px`
+    captionLines = wrapText(ctx, caption, maxWidth, 10)
     const captionMaxWidth = Math.max(...captionLines.map(line => ctx.measureText(line).width))
     captionBoxWidth = captionMaxWidth + leftPadding + rightPadding + boxExtension
     captionLineHeight = firstNameSize * 1.1
@@ -661,8 +702,6 @@ function drawRareCardContent(
 
   // Position: title on top (bottom edge fixed), caption below (top edge fixed)
   // The anchor Y represents where title bottom / caption top meet
-  const anchorY = 794  // Moved up 50px from name anchorY (844)
-
   // Draw title box FIRST so caption overlaps on top
   ctx.save()
   ctx.translate(anchorX, anchorY)
@@ -671,15 +710,15 @@ function drawRareCardContent(
   // Title box (white with blue border - same as last name box)
   // Bottom-justified: box extends upward from bottom edge
   const titleBoxTop = -titleBoxHeight
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.fillStyle = palette.white
   ctx.fillRect(-titleBoxWidth + boxExtension, titleBoxTop, titleBoxWidth, titleBoxHeight)
-  ctx.strokeStyle = USQC26_COLORS.secondary
+  ctx.strokeStyle = palette.secondary
   ctx.lineWidth = lastNameBox.borderWidth
   ctx.strokeRect(-titleBoxWidth + boxExtension, titleBoxTop, titleBoxWidth, titleBoxHeight)
 
   // Title text (styled like first name: bottom-justified, overflow up)
-  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
-  ctx.letterSpacing = '0px'
+  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
+  ctx.letterSpacing = `${titleLetterSpacing}px`
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'miter'
@@ -692,11 +731,11 @@ function drawRareCardContent(
     const lineY = -titleTextPadding - (i * titleLineHeight) + textYOffset
     const lineText = titleLines[lineIndex]
 
-    ctx.strokeStyle = USQC26_COLORS.primary
+    ctx.strokeStyle = palette.primary
     ctx.lineWidth = lastNameBox.strokeWidth
-    ctx.strokeText(lineText, -rightPadding + titleTextXOffset, lineY)
-    ctx.fillStyle = USQC26_COLORS.white
-    ctx.fillText(lineText, -rightPadding + titleTextXOffset, lineY)
+    ctx.strokeText(lineText, -rightPadding + titleTextOffsetX, lineY)
+    ctx.fillStyle = palette.white
+    ctx.fillText(lineText, -rightPadding + titleTextOffsetX, lineY)
   }
 
   ctx.restore()
@@ -709,15 +748,15 @@ function drawRareCardContent(
 
     // Caption box (light blue with white border - same as first name box)
     // Top-justified: box extends downward from top edge
-    ctx.fillStyle = USQC26_COLORS.secondary
+    ctx.fillStyle = palette.secondary
     ctx.fillRect(-captionBoxWidth + boxExtension, 0, captionBoxWidth, captionBoxHeight)
-    ctx.strokeStyle = USQC26_COLORS.white
+    ctx.strokeStyle = palette.white
     ctx.lineWidth = firstNameBox.borderWidth
     ctx.strokeRect(-captionBoxWidth + boxExtension, 0, captionBoxWidth, captionBoxHeight)
 
     // Caption text (styled like last name: top-justified, overflow down)
-    ctx.font = `500 italic ${firstNameSize}px ${FONT_AMIFER}`
-    ctx.letterSpacing = '0px'
+    ctx.font = `500 italic ${firstNameSize}px ${typography.fontFamily}`
+    ctx.letterSpacing = `${captionLetterSpacing}px`
     ctx.textAlign = 'right'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'miter'
@@ -729,11 +768,11 @@ function drawRareCardContent(
       const lineY = captionTextPadding + (i * captionLineHeight) + textYOffset
       const lineText = captionLines[i]
 
-      ctx.strokeStyle = USQC26_COLORS.white
+      ctx.strokeStyle = palette.white
       ctx.lineWidth = firstNameBox.strokeWidth
-      ctx.strokeText(lineText, -rightPadding + captionTextXOffset, lineY)
-      ctx.fillStyle = USQC26_COLORS.primary
-      ctx.fillText(lineText, -rightPadding + captionTextXOffset, lineY)
+      ctx.strokeText(lineText, -rightPadding + captionTextOffsetX, lineY)
+      ctx.fillStyle = palette.primary
+      ctx.fillText(lineText, -rightPadding + captionTextOffsetX, lineY)
     }
 
     ctx.restore()
@@ -745,22 +784,24 @@ function drawRareCardContent(
 function drawSuperRareName(
   ctx: CanvasRenderingContext2D,
   firstName: string,
-  lastName: string
+  lastName: string,
+  layout: Usqc26LayoutV1
 ) {
-  const { centerX, firstNameY, lastNameY, firstNameSize, lastNameSize } = USQC26_LAYOUT.superRare
+  const { superRare, palette, typography } = layout
+  const { centerX, firstNameY, lastNameY, firstNameSize, lastNameSize } = superRare
 
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
   // First name (smaller, above)
-  ctx.font = `500 ${firstNameSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.font = `500 ${firstNameSize}px ${typography.fontFamily}`
+  ctx.fillStyle = palette.white
   ctx.fillText(firstName.toUpperCase(), centerX, firstNameY)
 
   // Last name (larger, below) - with italic style
-  ctx.font = `500 italic ${lastNameSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
+  ctx.fillStyle = palette.white
   ctx.fillText(lastName, centerX, lastNameY)
 
   ctx.restore()
@@ -768,34 +809,42 @@ function drawSuperRareName(
 
 function drawNationalTeamName(
   ctx: CanvasRenderingContext2D,
-  fullName: string
+  fullName: string,
+  layout: Usqc26LayoutV1
 ) {
-  const { nameY, nameFontSize } = USQC26_LAYOUT.nationalTeam
+  const { nationalTeam, palette, typography } = layout
+  const {
+    rotation,
+    anchorX,
+    anchorY,
+    boxWidth,
+    boxHeight,
+    boxBorderWidth,
+    textPaddingX,
+    nameFontSize,
+  } = nationalTeam
 
   ctx.save()
 
   // Draw name at top in angled box
-  const rotation = -6
   const radians = (rotation * Math.PI) / 180
 
-  ctx.translate(180, nameY + 25)
+  ctx.translate(anchorX, anchorY)
   ctx.rotate(radians)
 
   // Name box (white with blue border)
-  const boxWidth = 500
-  const boxHeight = 50
-  ctx.fillStyle = USQC26_COLORS.white
+  ctx.fillStyle = palette.white
   ctx.fillRect(0, -boxHeight / 2, boxWidth, boxHeight)
-  ctx.strokeStyle = USQC26_COLORS.secondary
-  ctx.lineWidth = 3
+  ctx.strokeStyle = palette.secondary
+  ctx.lineWidth = boxBorderWidth
   ctx.strokeRect(0, -boxHeight / 2, boxWidth, boxHeight)
 
   // Name text
-  ctx.font = `500 ${nameFontSize}px ${FONT_AMIFER}`
-  ctx.fillStyle = USQC26_COLORS.primary
+  ctx.font = `500 ${nameFontSize}px ${typography.fontFamily}`
+  ctx.fillStyle = palette.primary
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
-  ctx.fillText(fullName.toUpperCase(), 16, 0)
+  ctx.fillText(fullName.toUpperCase(), textPaddingX, 0)
 
   ctx.restore()
 }
@@ -819,15 +868,28 @@ async function renderCardFrame(
   crop: CropRect
 ) {
   const { card, config, imageUrl, resolveAssetUrl } = input
+  const { templateSnapshot } = resolveTemplateSnapshot({
+    card,
+    config,
+    templateId: input.templateId,
+  })
+  const layout = asUsqc26Layout(templateSnapshot.layout)
+  const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
 
-  // Explicitly load Amifer font before rendering to ensure it's available for canvas
+  // Explicitly load font before rendering to ensure it's available for canvas
   if (document.fonts?.load) {
-    await Promise.all([
-      document.fonts.load('500 24px "Amifer"'),
-      document.fonts.load('500 84px "Amifer"'),
-      document.fonts.load('500 italic 43px "Amifer"'),
-      document.fonts.load('500 italic 60px "Amifer"'),
+    const fontFamily = layout.typography.fontFamily
+    const fontLoads = new Set<string>([
+      `500 ${layout.bottomBar.fontSize}px ${fontFamily}`,
+      `500 ${layout.positionNumber.positionFontSize}px ${fontFamily}`,
+      `500 ${layout.positionNumber.numberFontSize}px ${fontFamily}`,
+      `500 italic ${layout.name.firstNameSize}px ${fontFamily}`,
+      `500 italic ${layout.name.lastNameSize}px ${fontFamily}`,
+      `500 ${layout.superRare.firstNameSize}px ${fontFamily}`,
+      `500 italic ${layout.superRare.lastNameSize}px ${fontFamily}`,
+      `500 ${layout.nationalTeam.nameFontSize}px ${fontFamily}`,
     ])
+    await Promise.all([...fontLoads].map((font) => document.fonts.load(font)))
   }
 
   ctx.imageSmoothingEnabled = true
@@ -837,79 +899,98 @@ async function renderCardFrame(
   const img = await loadImage(imageUrl)
   drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
 
-  // 2. Draw content boxes BEFORE the frame (so frame covers them)
+  // 2. Draw template overlays below text
+  if (flags.showGradient) {
+    drawGradientOverlay(ctx, theme)
+  }
+  if (flags.showBorders) {
+    drawBorders(ctx, theme)
+  }
+
+  if (flags.showWatermarkJersey) {
+    const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+    drawWatermarkJersey(ctx, jerseyNumber, theme, layout)
+  }
+
+  // 3. Draw content boxes BEFORE the frame (so frame covers them)
   const isStandardPlayer = card.cardType !== 'rare' && card.cardType !== 'super-rare' && card.cardType !== 'national-team'
   if (isStandardPlayer) {
     const firstName = 'firstName' in card ? card.firstName ?? '' : ''
     const lastName = 'lastName' in card ? card.lastName ?? '' : ''
     if (firstName || lastName) {
-      drawAngledNameBoxes(ctx, firstName, lastName)
+      drawAngledNameBoxes(ctx, firstName, lastName, layout)
     }
   } else if (card.cardType === 'rare') {
     // Rare card: draw title/caption boxes before frame
     const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
     const caption = 'caption' in card ? card.caption ?? '' : ''
-    drawRareCardContent(ctx, title, caption)
+    drawRareCardContent(ctx, title, caption, layout)
   }
 
-  // 3. Draw the frame overlay
-  drawFrame(ctx)
+  // 4. Draw the frame overlay
+  drawFrame(ctx, layout)
 
-  // 4. Draw team logo (or override logo for certain card types like media/official)
+  const overlayImg = await loadImageSafe(overlayKey ? resolveAssetUrl(overlayKey) : null)
+  if (overlayImg && overlayPlacement === 'belowText') {
+    drawOverlay(ctx, overlayImg)
+  }
+
+  // 5. Draw team logo (or override logo for certain card types like media/official)
   const team = getTeamInfo(card, config)
   const cardTypeConfig = config.cardTypes.find((ct) => ct.type === card.cardType)
   const logoKey = cardTypeConfig?.logoOverrideKey || team?.logoKey || config.branding.tournamentLogoKey
   const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
   if (logoImg) {
-    const { x, y, maxWidth, maxHeight } = USQC26_LAYOUT.teamLogo
-    drawLogo(ctx, logoImg, x, y, maxWidth, maxHeight)
+    const placement = card.cardType === 'national-team' ? layout.nationalTeam.logo : layout.teamLogo
+    const { x, y, maxWidth, maxHeight } = placement
+    drawLogo(ctx, logoImg, x, y, maxWidth, maxHeight, layout)
   }
 
-  // 5. Draw event indicator badge (if configured)
+  // 6. Draw event indicator badge (if configured)
   const eventIndicator = config.branding.eventIndicator
   if (eventIndicator) {
-    drawEventBadge(ctx, eventIndicator)
+    drawEventBadge(ctx, eventIndicator, layout)
   }
 
-  // 6. Load camera icon for bottom bar
+  // 7. Load camera icon for bottom bar
   const cameraImg = await loadImageSafe(cameraIconUrl)
 
-  // 7. Draw card-type-specific content
+  // 8. Draw card-type-specific content
   if (card.cardType === 'rare') {
     // Rare card: title/caption already drawn before frame
     // Just draw bottom bar
     const photographer = card.photographer ?? ''
-    drawBottomBar(ctx, photographer, 'RARE CARD', 'rare', cameraImg)
+    drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
 
   } else if (card.cardType === 'super-rare') {
     // Super rare: centered name style
     const firstName = 'firstName' in card ? card.firstName ?? '' : ''
     const lastName = 'lastName' in card ? card.lastName ?? '' : ''
-    drawSuperRareName(ctx, firstName, lastName)
+    drawSuperRareName(ctx, firstName, lastName, layout)
 
     // Position and number for super-rare
     if ('position' in card && card.position && 'jerseyNumber' in card && card.jerseyNumber) {
-      drawPositionNumber(ctx, card.position, card.jerseyNumber)
+      drawPositionNumber(ctx, card.position, card.jerseyNumber, layout)
     }
 
     // Bottom bar
     const photographer = card.photographer ?? ''
     const teamName = team?.name ?? ''
-    drawBottomBar(ctx, photographer, teamName, 'super-rare', cameraImg)
+    drawBottomBar(ctx, photographer, teamName, layout, 'super-rare', cameraImg)
 
   } else if (card.cardType === 'national-team') {
     // National team (uncommon): name at top
     const firstName = 'firstName' in card ? card.firstName ?? '' : ''
     const lastName = 'lastName' in card ? card.lastName ?? '' : ''
     const fullName = `${firstName} ${lastName}`.trim()
-    drawNationalTeamName(ctx, fullName)
+    drawNationalTeamName(ctx, fullName, layout)
 
     // Bottom bar with team name and jersey number
     const photographer = card.photographer ?? ''
-    const teamName = team?.name ?? 'USA QUADBALL'
+    const teamName = team?.name ?? layout.nationalTeam.defaultTeamName
     const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber ?? '' : ''
     const bottomText = jerseyNumber ? `${teamName} #${jerseyNumber}` : teamName
-    drawBottomBar(ctx, photographer, bottomText, 'uncommon', cameraImg)
+    drawBottomBar(ctx, photographer, bottomText, layout, 'uncommon', cameraImg)
 
   } else {
     // Standard player card (includes team-staff, media, official, tournament-staff)
@@ -924,18 +1005,22 @@ async function renderCardFrame(
 
     if (isPositionInBottomBar) {
       // Position goes in bottom bar (where team name normally is)
-      drawBottomBar(ctx, photographer, position, rarity, cameraImg)
+      drawBottomBar(ctx, photographer, position, layout, rarity, cameraImg)
     } else {
       // Position and number in top-right (jersey number is optional for some card types like team-staff)
       if (position) {
         const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
-        drawPositionNumber(ctx, position, jerseyNumber)
+        drawPositionNumber(ctx, position, jerseyNumber, layout)
       }
 
       // Bottom bar with team name
       const teamName = team?.name ?? ''
-      drawBottomBar(ctx, photographer, teamName, rarity, cameraImg)
+      drawBottomBar(ctx, photographer, teamName, layout, rarity, cameraImg)
     }
+  }
+
+  if (overlayImg && overlayPlacement === 'aboveText') {
+    drawOverlay(ctx, overlayImg)
   }
 }
 
