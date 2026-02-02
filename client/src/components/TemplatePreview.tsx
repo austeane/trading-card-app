@@ -83,7 +83,7 @@ type TemplatePreviewProps = {
 
 export default function TemplatePreview({ config, templateId, templateLabel }: TemplatePreviewProps) {
   const enabledCardTypes = useMemo(
-    () => config.cardTypes.filter((entry) => entry.enabled).map((entry) => entry.type),
+    () => config.cardTypes.filter((entry) => entry.enabled !== false).map((entry) => entry.type),
     [config.cardTypes]
   )
   const [cardType, setCardType] = useState<CardType>(enabledCardTypes[0] ?? 'player')

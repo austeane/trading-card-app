@@ -4,7 +4,7 @@ export const USQC_2025_TOURNAMENT: TournamentListEntry = {
   "id": "usqc-2025",
   "name": "US Quadball Cup 2025",
   "year": 2025,
-  "published": true
+  "published": false
 }
 
 export const USQC_2025_CONFIG: TournamentConfig = {

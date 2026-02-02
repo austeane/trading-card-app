@@ -64,6 +64,7 @@ const MAX_TEMPLATE_LENGTH = 32
 const EDIT_TOKEN_HEADER = 'x-edit-token'
 const ADMIN_AUTH_WINDOW_MS = 10 * 60_000
 const ADMIN_AUTH_MAX_FAILURES = 24
+const DISABLED_PUBLIC_TOURNAMENT_IDS = new Set<string>(['usqc-2025'])
 
 const CARD_TYPES: CardType[] = [
   'player',
@@ -755,11 +756,14 @@ app.post('/feedback', async (c) => {
 app.get('/tournaments', async (c) => {
   const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
   // Only return published tournaments to public
-  return c.json(list.filter((t) => t.published))
+  return c.json(list.filter((t) => t.published && !DISABLED_PUBLIC_TOURNAMENT_IDS.has(t.id)))
 })
 
 app.get('/tournaments/:id', async (c) => {
   const id = c.req.param('id')
+  if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
+    return c.json({ error: 'Tournament not found' }, 404)
+  }
   const config =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
     FALLBACK_CONFIGS[id]
@@ -773,6 +777,9 @@ app.get('/tournaments/:id', async (c) => {
 
 app.get('/tournaments/:id/teams', async (c) => {
   const id = c.req.param('id')
+  if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
+    return c.json({ error: 'Tournament not found' }, 404)
+  }
   const config =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
     FALLBACK_CONFIGS[id]
