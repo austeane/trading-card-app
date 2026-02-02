@@ -478,6 +478,87 @@ body {
 }
 
 /* ============================================
+   Feedback Widget
+   ============================================ */
+
+.feedback-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  background-color: var(--text-primary);
+  color: white;
+  box-shadow: var(--shadow-lg);
+}
+
+.feedback-fab:hover:not(:disabled) {
+  background-color: #111111;
+  transform: translateY(-1px);
+}
+
+.feedback-modal {
+  max-width: 520px;
+}
+
+.feedback-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.feedback-textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+.feedback-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.feedback-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+}
+
+.feedback-checkbox input {
+  accent-color: var(--accent-primary);
+}
+
+.feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.feedback-success {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background-color: #ecfdf3;
+  color: #027a48;
+  border: 1px solid #a6f4c5;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .feedback-fab {
+    right: 16px;
+    bottom: 16px;
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+}
+
+/* ============================================
    Divider
    ============================================ */
 
