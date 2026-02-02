@@ -21,8 +21,6 @@ import {
   type CropRect,
   type TournamentConfig,
   type TournamentListEntry,
-  USQC_2025_CONFIG,
-  USQC_2025_TOURNAMENT,
   USQC_2026_TOURNAMENT,
 } from 'shared'
 import { renderPreviewTrim } from './renderCard'
@@ -518,7 +516,7 @@ function App() {
   const tournamentsQuery = useQuery({
     queryKey: ['tournaments'],
     queryFn: fetchTournaments,
-    initialData: [USQC_2025_TOURNAMENT, USQC_2026_TOURNAMENT],
+    initialData: [USQC_2026_TOURNAMENT],
   })
 
   useEffect(() => {
@@ -541,9 +539,7 @@ function App() {
     enabled: Boolean(form.tournamentId),
   })
 
-  const tournamentConfig =
-    tournamentQuery.data ??
-    (form.tournamentId === USQC_2025_CONFIG.id ? USQC_2025_CONFIG : null)
+  const tournamentConfig = tournamentQuery.data ?? null
 
   const cardTypeConfig = useMemo(
     () => tournamentConfig?.cardTypes.find((entry) => entry.type === form.cardType),
