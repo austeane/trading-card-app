@@ -99,8 +99,8 @@ export default $config({
       environment: {
         // Set to "true" to require admin password, "false" to disable auth
         ADMIN_AUTH_ENABLED: "false",
-        FEEDBACK_TO_EMAIL: "tradingcards@usquadball.org",
-        FEEDBACK_FROM_EMAIL: "tradingcards@usquadball.org",
+        FEEDBACK_TO_EMAIL: "austinwallacetech@gmail.com",
+        FEEDBACK_FROM_EMAIL: "austinwallacetech@gmail.com",
       },
     });
 
