@@ -96,7 +96,7 @@ export const USQC_2026_CONFIG: TournamentConfig = {
     },
     {
       "type": "national-team",
-      "enabled": true,
+      "enabled": false,
       "label": "National Team",
       "showTeamField": true,
       "showJerseyNumber": true,
