@@ -3,6 +3,8 @@
  * Stores cardId, editToken, and form data so users can resume after refresh.
  */
 
+import { recordFeedbackEvent } from './feedbackLog'
+
 const STORAGE_KEY = 'trading-card-draft'
 
 export type SavedDraft = {
@@ -39,6 +41,12 @@ export type SavedDraft = {
 export function saveDraft(draft: SavedDraft): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(draft))
+    recordFeedbackEvent('draft_saved', {
+      cardId: draft.cardId,
+      tournamentId: draft.tournamentId,
+      cardType: draft.cardType,
+      savedAt: draft.savedAt,
+    })
   } catch {
     // localStorage might be full or disabled - fail silently
   }
@@ -67,6 +75,7 @@ export function loadDraft(): SavedDraft | null {
 export function clearDraft(): void {
   try {
     localStorage.removeItem(STORAGE_KEY)
+    recordFeedbackEvent('draft_cleared')
   } catch {
     // fail silently
   }

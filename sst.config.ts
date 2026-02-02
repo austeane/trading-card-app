@@ -90,9 +90,17 @@ export default $config({
         },
       },
       link: [mediaBucket, cardsTable, adminPassword],
+      permissions: [
+        {
+          actions: ["ses:SendEmail"],
+          resources: ["*"],
+        },
+      ],
       environment: {
         // Set to "true" to require admin password, "false" to disable auth
-        ADMIN_AUTH_ENABLED: "false",
+        ADMIN_AUTH_ENABLED: "true",
+        FEEDBACK_TO_EMAIL: "austinwallacetech@gmail.com",
+        FEEDBACK_FROM_EMAIL: "austinwallacetech@gmail.com",
       },
     });
 

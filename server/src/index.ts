@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import type {
@@ -15,6 +16,7 @@ import type {
   CardStatus,
   CardType,
   CropRect,
+  FeedbackPayload,
   RenderMeta,
   TemplateLayout,
   Usqc26LayoutV1,
@@ -58,17 +60,23 @@ const shouldRateLimit = (method: string) =>
 
 const s3 = new S3Client({})
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}))
+const ses = new SESClient({})
 
 const ALLOWED_UPLOAD_TYPES: Set<string> = new Set(ALLOWED_UPLOAD_TYPES_LIST)
 const ALLOWED_RENDER_TYPES: Set<string> = new Set(ALLOWED_RENDER_TYPES_LIST)
 const RENDER_EXTENSION = 'png'
 const CONFIG_LIST_KEY = 'config/tournaments.json'
 const CONFIG_PREFIX = 'config/tournaments'
+const FEEDBACK_TO_EMAIL = process.env.FEEDBACK_TO_EMAIL ?? 'austinwallacetech@gmail.com'
+const FEEDBACK_FROM_EMAIL = process.env.FEEDBACK_FROM_EMAIL ?? FEEDBACK_TO_EMAIL
+const MAX_FEEDBACK_MESSAGE_LENGTH = 2000
+const MAX_FEEDBACK_CONTEXT_LENGTH = 20_000
 
 const MAX_TEMPLATE_LENGTH = 32
 const EDIT_TOKEN_HEADER = 'x-edit-token'
 const ADMIN_AUTH_WINDOW_MS = 10 * 60_000
 const ADMIN_AUTH_MAX_FAILURES = 24
+const DISABLED_PUBLIC_TOURNAMENT_IDS = new Set<string>(['usqc-2025'])
 
 const CARD_TYPES: CardType[] = [
   'player',
@@ -949,6 +957,54 @@ const bodyToString = async (body: unknown) => {
   return ''
 }
 
+const serializeFeedbackContext = (context: unknown) => {
+  if (!context || typeof context !== 'object') return ''
+  try {
+    const text = JSON.stringify(context, null, 2)
+    if (text.length <= MAX_FEEDBACK_CONTEXT_LENGTH) return text
+    return `${text.slice(0, MAX_FEEDBACK_CONTEXT_LENGTH)}\n...truncated`
+  } catch {
+    return ''
+  }
+}
+
+const sendFeedbackEmail = async (
+  payload: FeedbackPayload,
+  meta: { ip: string; userAgent: string | undefined; receivedAt: string }
+) => {
+  if (!FEEDBACK_TO_EMAIL || !FEEDBACK_FROM_EMAIL) {
+    throw new Error('Feedback email is not configured')
+  }
+
+  const contextText = serializeFeedbackContext(payload.context)
+  const body = [
+    `Received: ${meta.receivedAt}`,
+    `IP: ${meta.ip}`,
+    `User-Agent: ${meta.userAgent ?? 'unknown'}`,
+    '',
+    'Message:',
+    payload.message,
+    '',
+    'Context:',
+    contextText || 'Not provided',
+  ].join('\n')
+
+  const subject = `Trading Cards Feedback - ${new Date(meta.receivedAt).toLocaleDateString('en-US')}`
+
+  await ses.send(
+    new SendEmailCommand({
+      Destination: { ToAddresses: [FEEDBACK_TO_EMAIL] },
+      Source: FEEDBACK_FROM_EMAIL,
+      Message: {
+        Subject: { Data: subject, Charset: 'UTF-8' },
+        Body: {
+          Text: { Data: body, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}
+
 const readJsonFromS3 = async <T>(key: string): Promise<T | null> => {
   try {
     const result = await s3.send(
@@ -1103,14 +1159,44 @@ app.get('/admin-config', (c) => {
   return c.json({ authEnabled: isAdminAuthEnabled() })
 })
 
+app.post('/feedback', async (c) => {
+  const body = await getJsonBody(c)
+  if (!isRecord(body)) return badRequest(c, 'Invalid request body')
+
+  const message = normalizeString(body.message)
+  if (!message) return badRequest(c, 'message is required')
+  if (message.length > MAX_FEEDBACK_MESSAGE_LENGTH) {
+    return badRequest(c, `message must be ${MAX_FEEDBACK_MESSAGE_LENGTH} characters or fewer`)
+  }
+
+  const payload: FeedbackPayload = {
+    message,
+    context: body.context as FeedbackPayload['context'],
+  }
+
+  const ip = getClientIp(c)
+  const userAgent = c.req.header('user-agent')
+
+  try {
+    await sendFeedbackEmail(payload, { ip, userAgent, receivedAt: nowIso() })
+    return c.json({ success: true }, 200)
+  } catch (err) {
+    console.error('Feedback email failed', err)
+    return c.json({ error: 'Could not send feedback' }, 500)
+  }
+})
+
 app.get('/tournaments', async (c) => {
   const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
   // Only return published tournaments to public
-  return c.json(list.filter((t) => t.published))
+  return c.json(list.filter((t) => t.published && !DISABLED_PUBLIC_TOURNAMENT_IDS.has(t.id)))
 })
 
 app.get('/tournaments/:id', async (c) => {
   const id = c.req.param('id')
+  if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
+    return c.json({ error: 'Tournament not found' }, 404)
+  }
   const config =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
     FALLBACK_CONFIGS[id]
@@ -1124,6 +1210,9 @@ app.get('/tournaments/:id', async (c) => {
 
 app.get('/tournaments/:id/teams', async (c) => {
   const id = c.req.param('id')
+  if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
+    return c.json({ error: 'Tournament not found' }, 404)
+  }
   const config =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
     FALLBACK_CONFIGS[id]
