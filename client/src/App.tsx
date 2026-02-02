@@ -1704,7 +1704,7 @@ function App() {
                     >
                       <option value="">Select type</option>
                       {tournamentConfig?.cardTypes
-                        .filter((entry) => entry.enabled)
+                        .filter((entry) => entry.enabled !== false)
                         .map((entry) => (
                           <option key={entry.type} value={entry.type}>
                             {entry.label}
