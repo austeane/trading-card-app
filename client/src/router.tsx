@@ -1,9 +1,15 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router'
 import App from './App'
 import Admin from './Admin'
+import FeedbackWidget from './components/FeedbackWidget'
 
 const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: () => (
+    <>
+      <Outlet />
+      <FeedbackWidget />
+    </>
+  ),
 })
 
 const indexRoute = createRoute({

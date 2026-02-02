@@ -26,6 +26,7 @@ import {
 import { renderPreviewTrim } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
+import { recordFeedbackEvent } from './feedbackLog'
 import CropGuides from './components/CropGuides'
 
 // Step definitions for progress tracker
@@ -496,6 +497,12 @@ function App() {
   // Ref to track last saved state for debounced auto-save
   const lastSavedRef = useRef<string | null>(null)
   const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastAutoSaveStatusRef = useRef(autoSaveStatus)
+  const lastErrorRef = useRef<string | null>(null)
+  const lastPhotoErrorRef = useRef<string | null>(null)
+  const lastTournamentRef = useRef<string | null>(null)
+  const lastCardTypeRef = useRef<string | null>(null)
+  const hadCropRef = useRef(false)
 
   // Refs for progress tracker scroll-to-section
   const sectionRefs = useRef<Record<StepId, HTMLElement | null>>({
@@ -512,6 +519,61 @@ function App() {
     queryFn: fetchHello,
     enabled: false,
   })
+
+  useEffect(() => {
+    recordFeedbackEvent('app_loaded', { path: window.location.pathname })
+  }, [])
+
+  useEffect(() => {
+    if (form.tournamentId && form.tournamentId !== lastTournamentRef.current) {
+      recordFeedbackEvent('tournament_selected', { tournamentId: form.tournamentId })
+      lastTournamentRef.current = form.tournamentId
+    }
+  }, [form.tournamentId])
+
+  useEffect(() => {
+    if (form.cardType && form.cardType !== lastCardTypeRef.current) {
+      recordFeedbackEvent('card_type_selected', { cardType: form.cardType })
+      lastCardTypeRef.current = form.cardType
+    }
+  }, [form.cardType])
+
+  useEffect(() => {
+    if (autoSaveStatus !== lastAutoSaveStatusRef.current) {
+      if (autoSaveStatus === 'saved' || autoSaveStatus === 'error') {
+        recordFeedbackEvent('auto_save', {
+          status: autoSaveStatus,
+          cardId: cardId ?? undefined,
+        })
+      }
+      lastAutoSaveStatusRef.current = autoSaveStatus
+    }
+  }, [autoSaveStatus, cardId])
+
+  useEffect(() => {
+    if (error && error !== lastErrorRef.current) {
+      recordFeedbackEvent('error', { message: error })
+      lastErrorRef.current = error
+    }
+  }, [error])
+
+  useEffect(() => {
+    if (photoError && photoError !== lastPhotoErrorRef.current) {
+      recordFeedbackEvent('photo_error', { message: photoError })
+      lastPhotoErrorRef.current = photoError
+    }
+  }, [photoError])
+
+  useEffect(() => {
+    const hasCrop = Boolean(normalizedCrop)
+    if (hasCrop && !hadCropRef.current) {
+      recordFeedbackEvent('crop_set')
+    }
+    if (!hasCrop && hadCropRef.current) {
+      recordFeedbackEvent('crop_cleared')
+    }
+    hadCropRef.current = hasCrop
+  }, [normalizedCrop])
 
   const tournamentsQuery = useQuery({
     queryKey: ['tournaments'],
@@ -655,6 +717,11 @@ function App() {
     setCardId(card.id)
     setEditToken(card.editToken)
     setSavedCard(card)
+    recordFeedbackEvent('card_created', {
+      cardId: card.id,
+      tournamentId: payload.tournamentId,
+      cardType: payload.cardType,
+    })
 
     // Persist draft to localStorage for resume on refresh
     saveDraft({
@@ -703,10 +770,15 @@ function App() {
       setUploadedPhoto(uploaded)
       setUploadStatus('uploaded')
       setUploadProgress(null)
+      recordFeedbackEvent('photo_uploaded', {
+        cardId: currentCardId,
+        key: presign.key,
+      })
       return uploaded
     } catch {
       setUploadStatus('error')
       setUploadProgress(null)
+      recordFeedbackEvent('photo_upload_failed', { cardId: currentCardId })
       throw new Error('Photo upload failed. Please try again.')
     }
   }
@@ -729,6 +801,11 @@ function App() {
         setCardId(card.id)
         setEditToken(card.editToken)
         setSavedCard(card)
+        recordFeedbackEvent('card_autocreated', {
+          cardId: card.id,
+          tournamentId: form.tournamentId,
+          cardType: form.cardType,
+        })
 
         // Persist draft to localStorage (form fields are intentionally empty at this point)
         saveDraft({
@@ -1045,6 +1122,7 @@ function App() {
   const submitMutation = useMutation({
     mutationFn: async () => {
       setHasEdited(true)
+      recordFeedbackEvent('submit_attempt', { cardId: cardId ?? undefined })
 
       const validationErrors = getValidationErrors()
       if (photoError || Object.keys(validationErrors).length > 0) {
@@ -1086,12 +1164,14 @@ function App() {
     onSuccess: (data) => {
       setSavedCard(data)
       if (data.editToken) setEditToken(data.editToken)
+      recordFeedbackEvent('submit_success', { cardId: data.id })
       // Clear draft from localStorage after successful submit
       clearDraft()
     },
     onError: (err) => {
       setSubmitStatus('error')
       setError(err instanceof Error ? err.message : 'Submission failed')
+      recordFeedbackEvent('submit_error', { message: err instanceof Error ? err.message : String(err) })
     },
   })
 
@@ -1168,6 +1248,12 @@ function App() {
   const handleResumeDraft = useCallback(async () => {
     if (!pendingDraft) return
 
+    recordFeedbackEvent('draft_resumed', {
+      cardId: pendingDraft.cardId,
+      tournamentId: pendingDraft.tournamentId,
+      cardType: pendingDraft.cardType,
+    })
+
     // Restore card identifiers
     setCardId(pendingDraft.cardId)
     setEditToken(pendingDraft.editToken)
@@ -1213,6 +1299,7 @@ function App() {
 
   const handleDismissDraft = useCallback(() => {
     clearDraft()
+    recordFeedbackEvent('draft_dismissed')
     setPendingDraft(null)
   }, [])
 
@@ -1235,6 +1322,13 @@ function App() {
     try {
       const resized = await resizeImageIfNeeded(file)
       const localUrl = URL.createObjectURL(resized.file)
+
+      recordFeedbackEvent('photo_selected', {
+        type: resized.file.type,
+        size: resized.file.size,
+        width: resized.width,
+        height: resized.height,
+      })
 
       setPhoto((prev) => {
         if (prev) URL.revokeObjectURL(prev.localUrl)
@@ -1336,6 +1430,7 @@ function App() {
     setCrop({ x: 0, y: 0 })
     setZoom(1)
     setRotation(0)
+    recordFeedbackEvent('crop_reset')
     if (mediaSize) {
       setNormalizedCrop(buildDefaultCrop(mediaSize, 0))
     } else {

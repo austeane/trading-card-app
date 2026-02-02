@@ -157,3 +157,56 @@ export type TournamentConfig = {
 };
 
 export type CardDesign = Card;
+
+export type FeedbackLogEntry = {
+  at: string;
+  event: string;
+  data?: Record<string, unknown>;
+};
+
+export type FeedbackContext = {
+  sessionId: string;
+  url: string;
+  path: string;
+  app: {
+    env: string;
+    basePath?: string;
+    apiBase?: string;
+  };
+  device: {
+    userAgent: string;
+    platform?: string;
+    language?: string;
+    languages?: readonly string[];
+    timezone?: string;
+    screen?: {
+      width: number;
+      height: number;
+      pixelRatio: number;
+    };
+    viewport?: {
+      width: number;
+      height: number;
+    };
+    online?: boolean;
+    deviceMemory?: number;
+    hardwareConcurrency?: number;
+  };
+  draft?: {
+    cardId?: string;
+    tournamentId?: string;
+    cardType?: string;
+    hasPhoto?: boolean;
+    savedAt?: string;
+  };
+  logs?: FeedbackLogEntry[];
+};
+
+export type FeedbackPayload = {
+  message: string;
+  context?: FeedbackContext;
+};
+
+export type FeedbackResponse = {
+  success: true;
+};
