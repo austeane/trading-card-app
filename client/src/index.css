@@ -552,9 +552,14 @@ body {
 @media (max-width: 640px) {
   .feedback-fab {
     right: 16px;
-    bottom: 16px;
+    bottom: 80px; /* Account for mobile sticky footer */
     padding: 10px 16px;
     font-size: 13px;
+  }
+
+  /* Hide floating FAB when mobile footer is present */
+  .has-mobile-footer .feedback-fab {
+    display: none;
   }
 }
 

@@ -1594,7 +1594,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell min-h-screen">
+    <div className={`app-shell min-h-screen ${form.tournamentId ? 'has-mobile-footer' : ''}`}>
       {/* Resume Draft Modal */}
       {pendingDraft && (
         <div className="modal-backdrop">
@@ -2280,10 +2280,10 @@ function App() {
                 </div>
               </div>
 
-              {/* Submit Section */}
+              {/* Submit Section - hidden on mobile since we have sticky footer */}
               <div
                 ref={(el) => { sectionRefs.current.submit = el }}
-                className="sidebar-section scroll-mt-20"
+                className="sidebar-section scroll-mt-20 hidden md:block"
               >
                 <h3 className="sidebar-section-title">Submit</h3>
                 <p className="mb-4 text-sm text-[var(--text-secondary)]">
@@ -2331,14 +2331,26 @@ function App() {
       {/* Mobile Sticky Footer - only when tournament selected */}
       {form.tournamentId && (
         <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--border-light)] bg-white px-4 py-3 md:hidden">
-          <button
-            type="button"
-            onClick={() => submitMutation.mutate()}
-            disabled={!canSubmit}
-            className="studio-btn studio-btn-success w-full"
-          >
-            {submitButtonLabel}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-feedback-modal'))}
+              className="studio-btn studio-btn-ghost px-3 py-2 text-xs text-[var(--text-secondary)]"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 inline-block">
+                <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+              </svg>
+              Feedback
+            </button>
+            <button
+              type="button"
+              onClick={() => submitMutation.mutate()}
+              disabled={!canSubmit}
+              className="studio-btn studio-btn-success flex-1"
+            >
+              {submitButtonLabel}
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -250,8 +250,15 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
 
   // Only draw jersey number if provided
   if (number) {
-    // Calculate number Y position (below position text)
-    const numberY = topY + positionFontSize
+    // Calculate number Y position using actual text metrics for cross-browser consistency
+    // Safari may calculate font metrics differently, so we use measureText for accuracy
+    const positionMetrics = ctx.measureText(position.toUpperCase())
+    // Use actualBoundingBox if available (modern browsers), fallback to font size
+    const actualPositionHeight = (positionMetrics.actualBoundingBoxAscent !== undefined && positionMetrics.actualBoundingBoxDescent !== undefined)
+      ? positionMetrics.actualBoundingBoxAscent + positionMetrics.actualBoundingBoxDescent
+      : positionFontSize
+    // Use measured height plus a small gap for consistent spacing
+    const numberY = topY + actualPositionHeight + 2
 
     // Jersey number - #FFFFFF 67% opaque fill with #1B4278 stroke
     ctx.font = `500 ${numberFontSize}px ${typography.fontFamily}`

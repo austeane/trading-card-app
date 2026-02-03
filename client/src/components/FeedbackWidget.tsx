@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FeedbackContext, FeedbackPayload } from 'shared'
 import { api, writeHeaders } from '../api'
 import { loadDraft } from '../draftStorage'
@@ -72,6 +72,13 @@ const FeedbackWidget = () => {
     setError(null)
     recordFeedbackEvent('feedback_opened')
   }
+
+  // Listen for external trigger to open modal (e.g., from mobile footer)
+  useEffect(() => {
+    const handleOpenFeedback = () => openModal()
+    window.addEventListener('open-feedback-modal', handleOpenFeedback)
+    return () => window.removeEventListener('open-feedback-modal', handleOpenFeedback)
+  }, [])
 
   const closeModal = () => {
     setIsOpen(false)
