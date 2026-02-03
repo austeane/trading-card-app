@@ -60,19 +60,29 @@ export const GUIDE_PERCENTAGES = {
   ),
 }
 
-// USQC26 Design System Colors
-export const USQC26_COLORS = {
-  primary: '#1b4278',
-  secondary: '#c8d7e9',
-  white: '#ffffff',
-  numberOverlay: 'rgba(255, 255, 255, 0.67)',
-}
-
 // USQC26 Design System Layout (from Figma measurements)
-export const USQC26_LAYOUT = {
-  // Name section - angled boxes
+export const USQC26_LAYOUT_V1 = {
+  kind: 'usqc26-v1',
+  palette: {
+    primary: '#1b4278',
+    secondary: '#c8d7e9',
+    white: '#ffffff',
+    numberOverlay: 'rgba(255, 255, 255, 0.67)',
+  },
+  typography: {
+    fontFamily: '"Amifer", "Avenir Next", "Helvetica Neue", sans-serif',
+  },
+  frame: {
+    outerRadius: 0,
+    innerX: 56,
+    innerY: 91,
+    innerWidth: 713,
+    innerHeight: 937,
+    innerRadius: 29,
+  },
   name: {
     rotation: -6, // degrees
+    maxWidth: 550,
     firstNameBox: {
       width: 1000,
       height: 46,
@@ -85,23 +95,27 @@ export const USQC26_LAYOUT = {
       borderWidth: 3,
       strokeWidth: 8,
     },
-    // Anchor point for name section (right edge of last name)
     anchorX: 754,
     anchorY: 844,
-    // Font sizes
     firstNameSize: 43,
     lastNameSize: 60,
     letterSpacing: {
       firstName: 4.3,
       lastName: 6,
     },
-    // Text padding and positioning
     leftPadding: 8,
     rightPadding: 8,
-    boxExtension: 100, // Extra width to extend boxes past frame edge
-    textYOffset: 2, // Offset to lower text baseline
+    boxExtension: 100,
+    textYOffset: 2,
+    boxOffsets: {
+      firstName: 8,
+      lastName: 3,
+    },
+    textOffsets: {
+      firstName: 12,
+      lastName: 10,
+    },
   },
-  // Event indicator badge
   eventBadge: {
     x: 679,
     y: 64,
@@ -112,7 +126,6 @@ export const USQC26_LAYOUT = {
     fontSize: 17,
     textYOffset: 1,
   },
-  // Position and number (top-right)
   positionNumber: {
     centerX: 698,
     topY: 111,
@@ -124,14 +137,14 @@ export const USQC26_LAYOUT = {
     numberStrokeWidth: 8,
     numberXOffset: -2,
   },
-  // Team logo
   teamLogo: {
     x: 75,
     y: 64,
     maxWidth: 101,
     maxHeight: 100,
+    strokeWidth: 1,
+    strokeColor: '#ffffff',
   },
-  // Bottom bar
   bottomBar: {
     y: 1036,
     height: 26,
@@ -140,24 +153,24 @@ export const USQC26_LAYOUT = {
     photographerX: 107,
     rarityX: 403,
     raritySize: 20,
-    teamNameX: 750, // right-aligned
+    rarityGap: 4,
+    teamNameX: 750,
     fontSize: 20,
     letterSpacing: {
       photographer: 0.8,
       teamName: 0.6,
     },
   },
-  // Rare card title/caption
   rareCard: {
-    titleAnchorX: 300,
-    titleAnchorY: 810,
-    captionAnchorX: 427,
-    captionAnchorY: 869,
-    titleFontSize: 60,
-    captionFontSize: 43,
     rotation: -6,
+    anchorX: 754,
+    anchorY: 794,
+    maxWidth: 678,
+    titleTextOffsetX: 10,
+    captionTextOffsetX: 12,
+    titleLetterSpacing: 0,
+    captionLetterSpacing: 0,
   },
-  // Super rare centered name
   superRare: {
     centerX: CARD_WIDTH / 2,
     firstNameY: 853,
@@ -165,12 +178,20 @@ export const USQC26_LAYOUT = {
     firstNameSize: 56,
     lastNameSize: 81,
   },
-  // National team (uncommon) - name at top
   nationalTeam: {
-    nameY: 53,
+    rotation: -6,
+    anchorX: 180,
+    anchorY: 78,
+    boxWidth: 500,
+    boxHeight: 50,
+    boxBorderWidth: 3,
+    textPaddingX: 16,
     nameFontSize: 49,
-    logoX: 80,
-    logoY: 62,
-    logoMaxHeight: 100,
+    logo: {
+      x: 75,
+      y: 64,
+      maxWidth: 101,
+      maxHeight: 100,
+    },
   },
-}
+} as const

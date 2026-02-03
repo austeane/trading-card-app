@@ -10,7 +10,17 @@ import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from 
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import type { ApiResponse, Card, CardStatus, CardType, CropRect, FeedbackPayload, RenderMeta, TournamentConfig, TournamentListEntry } from 'shared'
+import type {
+  ApiResponse,
+  Card,
+  CardStatus,
+  CardType,
+  CropRect,
+  FeedbackPayload,
+  RenderMeta,
+  TournamentConfig,
+  TournamentListEntry,
+} from 'shared'
 import {
   ALLOWED_RENDER_TYPES as ALLOWED_RENDER_TYPES_LIST,
   ALLOWED_UPLOAD_TYPES as ALLOWED_UPLOAD_TYPES_LIST,
@@ -26,6 +36,7 @@ import {
   USQC_2025_TOURNAMENT,
   USQC_2026_CONFIG,
   USQC_2026_TOURNAMENT,
+  RenderMetaSchema,
 } from 'shared'
 
 const app = new Hono()
@@ -239,23 +250,6 @@ const validatePhotoKeys = (cardId: string, photo?: Card['photo']) => {
   return null
 }
 
-const TEMPLATE_THEME_KEYS = [
-  'gradientStart',
-  'gradientEnd',
-  'border',
-  'accent',
-  'label',
-  'nameColor',
-  'meta',
-  'watermark',
-] as const
-
-const TEMPLATE_FLAG_KEYS = [
-  'showGradient',
-  'showBorders',
-  'showWatermarkJersey',
-] as const
-
 const parseRenderMeta = (value: unknown, renderKey: string): RenderMeta | string => {
   if (!isRecord(value)) return 'renderMeta must be an object'
 
@@ -269,46 +263,24 @@ const parseRenderMeta = (value: unknown, renderKey: string): RenderMeta | string
   if (key !== renderKey) return 'renderMeta.key must match renderKey'
 
   if (!isRecord(value.templateSnapshot)) return 'renderMeta.templateSnapshot is required'
-  const snapshot = value.templateSnapshot
-
-  const overlayKey = normalizeString(snapshot.overlayKey)
-
-  if (!isRecord(snapshot.theme)) return 'renderMeta.templateSnapshot.theme is required'
-  const themeSource = snapshot.theme
-  const theme = {} as RenderMeta['templateSnapshot']['theme']
-  for (const field of TEMPLATE_THEME_KEYS) {
-    const raw = normalizeString(themeSource[field])
-    if (!raw) return `renderMeta.templateSnapshot.theme.${field} is required`
-    theme[field] = raw
-  }
-
-  if (!isRecord(snapshot.flags)) return 'renderMeta.templateSnapshot.flags is required'
-  const flagsSource = snapshot.flags
-  const flags = {} as RenderMeta['templateSnapshot']['flags']
-  for (const field of TEMPLATE_FLAG_KEYS) {
-    const raw = flagsSource[field]
-    if (typeof raw !== 'boolean') {
-      return `renderMeta.templateSnapshot.flags.${field} must be a boolean`
-    }
-    flags[field] = raw
-  }
-
-  const overlayPlacement = normalizeString(snapshot.overlayPlacement)
-  if (overlayPlacement !== 'belowText' && overlayPlacement !== 'aboveText') {
-    return 'renderMeta.templateSnapshot.overlayPlacement is invalid'
-  }
-
-  return {
+  
+  // Create the full renderMeta object for validation
+  const renderMetaInput = {
     key,
     templateId,
     renderedAt,
-    templateSnapshot: {
-      overlayKey: overlayKey ?? undefined,
-      theme,
-      flags,
-      overlayPlacement,
-    },
+    templateSnapshot: value.templateSnapshot,
   }
+
+  // Use Zod for full validation
+  const result = RenderMetaSchema.safeParse(renderMetaInput)
+  if (!result.success) {
+    const issue = result.error.issues[0] ?? { path: [], message: "Invalid renderMeta" }
+    const path = issue.path.join('.')
+    return path ? `${path}: ${issue.message}` : issue.message
+  }
+
+  return result.data
 }
 
 const validateCardFields = (card: CardInput) => {
