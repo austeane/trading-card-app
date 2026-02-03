@@ -169,7 +169,6 @@ export type Usqc26LayoutV1 = {
     boxBorderWidth: number;
     textPaddingX: number;
     nameFontSize: number;
-    defaultTeamName: string;
     logo: {
       x: number;
       y: number;
@@ -287,6 +286,7 @@ export type TournamentConfig = {
     orgLogoKey?: string;
     primaryColor?: string;
     eventIndicator?: string;
+    defaultTeamName?: string;
   };
   teams: Array<{
     id: string;

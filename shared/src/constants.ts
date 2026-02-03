@@ -187,7 +187,6 @@ export const USQC26_LAYOUT_V1 = {
     boxBorderWidth: 3,
     textPaddingX: 16,
     nameFontSize: 49,
-    defaultTeamName: 'USA QUADBALL',
     logo: {
       x: 75,
       y: 64,

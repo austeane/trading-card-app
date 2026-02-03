@@ -105,9 +105,9 @@ async function loadImageSafe(url?: string | null) {
   }
 }
 
-const asUsqc26Layout = (layout: TemplateLayout): Usqc26LayoutV1 => {
-  if (layout.kind !== 'usqc26-v1') {
-    throw new Error(`Unsupported layout kind: ${layout.kind}`)
+const asUsqc26Layout = (layout: TemplateLayout | undefined): Usqc26LayoutV1 | null => {
+  if (!layout || layout.kind !== 'usqc26-v1') {
+    return null
   }
   return layout
 }
@@ -268,15 +268,21 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
   ctx.restore()
 }
 
+type LogoPlacement = {
+  x: number
+  y: number
+  maxWidth: number
+  maxHeight: number
+  strokeWidth: number
+  strokeColor: string
+}
+
 function drawLogo(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
-  x: number,
-  y: number,
-  maxWidth: number,
-  maxHeight: number,
-  layout: Usqc26LayoutV1
+  placement: LogoPlacement
 ) {
+  const { x, y, maxWidth, maxHeight, strokeWidth, strokeColor } = placement
   const ratio = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
   const width = img.naturalWidth * ratio
   const height = img.naturalHeight * ratio
@@ -285,7 +291,6 @@ function drawLogo(
 
   // Draw 1px white outside stroke by drawing the logo slightly larger in white first
   // Using an offscreen canvas to create the stroke effect
-  const strokeWidth = layout.teamLogo.strokeWidth
   const offscreen = document.createElement('canvas')
   offscreen.width = Math.ceil(width + strokeWidth * 2)
   offscreen.height = Math.ceil(height + strokeWidth * 2)
@@ -297,7 +302,7 @@ function drawLogo(
 
     // Create white stroke by drawing the logo's silhouette
     offCtx.globalCompositeOperation = 'source-in'
-    offCtx.fillStyle = layout.teamLogo.strokeColor
+    offCtx.fillStyle = strokeColor
     offCtx.fillRect(0, 0, offscreen.width, offscreen.height)
 
     // Draw the white silhouette offset in all directions to create stroke effect
@@ -652,6 +657,16 @@ function drawWatermarkJersey(
   ctx.restore()
 }
 
+/**
+ * Draws rare card content using name layout properties.
+ *
+ * NOTE: Rare cards intentionally reuse `name` layout properties (box sizes,
+ * padding, text offsets) for visual consistency with player cards. The
+ * `rareCard` layout section only contains rare-specific overrides:
+ * - rotation, anchorX, anchorY, maxWidth (positioning)
+ * - titleTextOffsetX, captionTextOffsetX (text alignment adjustments)
+ * - titleLetterSpacing, captionLetterSpacing (spacing overrides)
+ */
 function drawRareCardContent(
   ctx: CanvasRenderingContext2D,
   title: string,
@@ -874,6 +889,19 @@ async function renderCardFrame(
     templateId: input.templateId,
   })
   const layout = asUsqc26Layout(templateSnapshot.layout)
+  if (!layout) {
+    // Render error state for missing or invalid layout
+    ctx.fillStyle = '#f87171'
+    ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '24px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('Tournament not configured', CARD_WIDTH / 2, CARD_HEIGHT / 2 - 20)
+    ctx.font = '16px sans-serif'
+    ctx.fillText('Please contact support', CARD_WIDTH / 2, CARD_HEIGHT / 2 + 20)
+    return
+  }
   const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
 
   // Explicitly load font before rendering to ensure it's available for canvas
@@ -941,9 +969,13 @@ async function renderCardFrame(
   const logoKey = cardTypeConfig?.logoOverrideKey || team?.logoKey || config.branding.tournamentLogoKey
   const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
   if (logoImg) {
-    const placement = card.cardType === 'national-team' ? layout.nationalTeam.logo : layout.teamLogo
-    const { x, y, maxWidth, maxHeight } = placement
-    drawLogo(ctx, logoImg, x, y, maxWidth, maxHeight, layout)
+    const basePlacement = card.cardType === 'national-team' ? layout.nationalTeam.logo : layout.teamLogo
+    const placement: LogoPlacement = {
+      ...basePlacement,
+      strokeWidth: layout.teamLogo.strokeWidth,
+      strokeColor: layout.teamLogo.strokeColor,
+    }
+    drawLogo(ctx, logoImg, placement)
   }
 
   // 6. Draw event indicator badge (if configured)
@@ -987,7 +1019,7 @@ async function renderCardFrame(
 
     // Bottom bar with team name and jersey number
     const photographer = card.photographer ?? ''
-    const teamName = team?.name ?? layout.nationalTeam.defaultTeamName
+    const teamName = team?.name ?? config.branding?.defaultTeamName ?? 'NATIONAL TEAM'
     const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber ?? '' : ''
     const bottomText = jerseyNumber ? `${teamName} #${jerseyNumber}` : teamName
     drawBottomBar(ctx, photographer, bottomText, layout, 'uncommon', cameraImg)
