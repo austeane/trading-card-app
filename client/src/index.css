@@ -558,7 +558,7 @@ body {
   }
 
   /* Hide floating FAB when mobile footer is present */
-  .has-mobile-footer .feedback-fab {
+  body.has-mobile-footer .feedback-fab {
     display: none;
   }
 }

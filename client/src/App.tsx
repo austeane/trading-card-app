@@ -524,6 +524,16 @@ function App() {
     recordFeedbackEvent('app_loaded', { path: window.location.pathname })
   }, [])
 
+  // Toggle body class for mobile footer visibility (used by FeedbackWidget CSS)
+  useEffect(() => {
+    if (form.tournamentId) {
+      document.body.classList.add('has-mobile-footer')
+    } else {
+      document.body.classList.remove('has-mobile-footer')
+    }
+    return () => document.body.classList.remove('has-mobile-footer')
+  }, [form.tournamentId])
+
   useEffect(() => {
     if (form.tournamentId && form.tournamentId !== lastTournamentRef.current) {
       recordFeedbackEvent('tournament_selected', { tournamentId: form.tournamentId })
@@ -1594,7 +1604,7 @@ function App() {
   }
 
   return (
-    <div className={`app-shell min-h-screen ${form.tournamentId ? 'has-mobile-footer' : ''}`}>
+    <div className="app-shell min-h-screen">
       {/* Resume Draft Modal */}
       {pendingDraft && (
         <div className="modal-backdrop">
