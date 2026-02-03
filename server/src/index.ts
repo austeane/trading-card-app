@@ -32,10 +32,6 @@ import {
   MAX_TEAM_LENGTH,
   MAX_TITLE_LENGTH,
   MAX_UPLOAD_BYTES,
-  USQC_2025_CONFIG,
-  USQC_2025_TOURNAMENT,
-  USQC_2026_CONFIG,
-  USQC_2026_TOURNAMENT,
   RenderMetaSchema,
 } from 'shared'
 
@@ -676,10 +672,24 @@ const requireAdmin: MiddlewareHandler = async (c, next) => {
 // Protect all admin routes
 app.use('/admin/*', requireAdmin)
 
-const FALLBACK_TOURNAMENTS: TournamentListEntry[] = [USQC_2025_TOURNAMENT, USQC_2026_TOURNAMENT]
-const FALLBACK_CONFIGS: Record<string, TournamentConfig> = {
-  [USQC_2025_CONFIG.id]: USQC_2025_CONFIG,
-  [USQC_2026_CONFIG.id]: USQC_2026_CONFIG,
+// Default template for creating new tournaments via admin UI
+const DEFAULT_NEW_TOURNAMENT_TEMPLATE: Omit<TournamentConfig, 'id' | 'name' | 'year' | 'createdAt' | 'updatedAt'> = {
+  branding: {
+    tournamentLogoKey: '',
+    orgLogoKey: '',
+    primaryColor: '#1b4278',
+  },
+  teams: [],
+  cardTypes: [
+    { type: 'player', enabled: true, label: 'Player', showTeamField: true, showJerseyNumber: true, positions: ['Beater', 'Chaser', 'Keeper', 'Seeker', 'Utility'] },
+    { type: 'team-staff', enabled: true, label: 'Team Staff', showTeamField: true, showJerseyNumber: false, positions: ['Captain', 'Coach', 'Manager', 'Staff'] },
+    { type: 'media', enabled: true, label: 'Media', showTeamField: false, showJerseyNumber: false, positions: ['Commentator', 'Photographer', 'Videographer', 'Media'] },
+    { type: 'official', enabled: true, label: 'Official', showTeamField: false, showJerseyNumber: false, positions: ['Head Referee', 'Referee'] },
+    { type: 'tournament-staff', enabled: true, label: 'Tournament Staff', showTeamField: false, showJerseyNumber: false, positions: ['Tournament Staff', 'Volunteer'] },
+    { type: 'rare', enabled: false, label: 'Rare Card', showTeamField: false, showJerseyNumber: false, positions: [] },
+  ],
+  templates: [{ id: 'classic', label: 'Classic' }],
+  defaultTemplates: { fallback: 'classic' },
 }
 
 app.get('/', (c) => c.text('Hello Hono!'))
@@ -726,7 +736,7 @@ app.post('/feedback', async (c) => {
 })
 
 app.get('/tournaments', async (c) => {
-  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
+  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? []
   // Only return published tournaments to public
   return c.json(list.filter((t) => t.published && !DISABLED_PUBLIC_TOURNAMENT_IDS.has(t.id)))
 })
@@ -736,9 +746,7 @@ app.get('/tournaments/:id', async (c) => {
   if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
     return c.json({ error: 'Tournament not found' }, 404)
   }
-  const config =
-    (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
-    FALLBACK_CONFIGS[id]
+  const config = await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))
 
   if (!config) {
     return c.json({ error: 'Tournament not found' }, 404)
@@ -752,9 +760,7 @@ app.get('/tournaments/:id/teams', async (c) => {
   if (DISABLED_PUBLIC_TOURNAMENT_IDS.has(id)) {
     return c.json({ error: 'Tournament not found' }, 404)
   }
-  const config =
-    (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
-    FALLBACK_CONFIGS[id]
+  const config = await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))
 
   if (!config) {
     return c.json({ error: 'Tournament not found' }, 404)
@@ -764,7 +770,7 @@ app.get('/tournaments/:id/teams', async (c) => {
 })
 
 app.get('/admin/tournaments', async (c) => {
-  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
+  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? []
   return c.json(list)
 })
 
@@ -775,9 +781,6 @@ app.get('/admin/tournaments/:id', async (c) => {
 
   const published = await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))
   if (published) return c.json(published)
-
-  const fallback = FALLBACK_CONFIGS[id]
-  if (fallback) return c.json(fallback)
 
   return c.json({ error: 'Tournament not found' }, 404)
 })
@@ -796,22 +799,23 @@ app.post('/admin/tournaments', async (c) => {
   if (!year || year < 2000) return badRequest(c, 'year is required')
 
   const now = nowIso()
-  const baseConfig = JSON.parse(JSON.stringify(USQC_2025_CONFIG)) as TournamentConfig
-  baseConfig.id = id
-  baseConfig.name = name
-  baseConfig.year = Math.floor(year)
-  baseConfig.branding = {
-    tournamentLogoKey: `config/tournaments/${id}/logos/tournament.png`,
-    orgLogoKey: `config/tournaments/${id}/logos/org.png`,
-    primaryColor: baseConfig.branding.primaryColor,
+  const baseConfig: TournamentConfig = {
+    ...DEFAULT_NEW_TOURNAMENT_TEMPLATE,
+    id,
+    name,
+    year: Math.floor(year),
+    branding: {
+      ...DEFAULT_NEW_TOURNAMENT_TEMPLATE.branding,
+      tournamentLogoKey: `config/tournaments/${id}/logos/tournament.png`,
+      orgLogoKey: `config/tournaments/${id}/logos/org.png`,
+    },
+    createdAt: now,
+    updatedAt: now,
   }
-  baseConfig.teams = []
-  baseConfig.createdAt = now
-  baseConfig.updatedAt = now
 
   await writeJsonToS3(getConfigKey(id, 'draft'), baseConfig)
 
-  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
+  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? []
   const nextList = list.filter((entry) => entry.id !== id)
   nextList.push({ id, name, year: Math.floor(year), published: false })
   await writeJsonToS3(CONFIG_LIST_KEY, nextList, { cacheControl: 'public, max-age=60' })
@@ -833,7 +837,6 @@ app.put('/admin/tournaments/:id', async (c) => {
   const existingConfig =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'draft'))) ??
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
-    FALLBACK_CONFIGS[id] ??
     null
   const existingTeamIds = new Set(existingConfig?.teams?.map((team) => team.id) ?? [])
 
@@ -866,7 +869,7 @@ app.post('/admin/tournaments/:id/logos-zip', async (c) => {
   const draft =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'draft'))) ??
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
-    FALLBACK_CONFIGS[id]
+    null
 
   if (!draft) {
     return c.json({ error: 'Tournament not found' }, 404)
@@ -1031,7 +1034,7 @@ app.post('/admin/tournaments/:id/publish', async (c) => {
   // Write published config with short cache (allows CloudFront to cache but still refreshes)
   await writeJsonToS3(publishedKey, draft, { cacheControl: 'public, max-age=60' })
 
-  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
+  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? []
   const nextList = list.map((entry) =>
     entry.id === id ? { ...entry, published: true } : entry
   )
@@ -1048,7 +1051,7 @@ app.get('/admin/tournaments/:id/bundle', async (c) => {
   const config =
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'draft'))) ??
     (await readJsonFromS3<TournamentConfig>(getConfigKey(id, 'published'))) ??
-    FALLBACK_CONFIGS[id]
+    null
 
   if (!config) {
     return c.json({ error: 'Tournament not found' }, 404)
@@ -1318,7 +1321,7 @@ app.post('/admin/tournaments/import-bundle', async (c) => {
   }
 
   // Update tournament list
-  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? FALLBACK_TOURNAMENTS
+  const list = (await readJsonFromS3<TournamentListEntry[]>(CONFIG_LIST_KEY)) ?? []
   const existing = list.find((entry) => entry.id === id)
   if (!existing) {
     list.push({ id, name: config.name, year: config.year, published: false })
