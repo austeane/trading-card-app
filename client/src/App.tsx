@@ -1783,6 +1783,28 @@ function App() {
                 Continue
               </button>
             </div>
+
+            <p className="mt-8 text-center text-xs text-[var(--text-muted)]">
+              Website by{' '}
+              <a
+                href="https://www.linkedin.com/in/austintwallace"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-[var(--text-secondary)]"
+              >
+                Austin Wallace
+              </a>
+              {' · '}
+              Card design by{' '}
+              <a
+                href="https://www.linkedin.com/in/shirleyluxixi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-[var(--text-secondary)]"
+              >
+                Shirley Lu
+              </a>
+            </p>
           </div>
         ) : (
           /* Main Studio Layout */
