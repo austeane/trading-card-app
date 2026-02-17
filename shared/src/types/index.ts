@@ -176,6 +176,60 @@ export type Usqc26LayoutV1 = {
       maxHeight: number;
     };
   };
+  headerBar?: {
+    height: number;
+    color: string;
+    fontSize: number;
+    fontStyle: string;
+    textColor: string;
+    textY: number;
+    paddingX: number;
+    /** Size of diagonal notch at bottom corners (0 = rectangle, >0 = trapezoid) */
+    notchSize?: number;
+  };
+  footerBar?: {
+    y: number;
+    height: number;
+    color: string;
+    fontSize: number;
+    fontStyle: string;
+    textColor: string;
+    textY: number;
+    paddingX: number;
+    /** Size of diagonal notch at top corners (0 = rectangle, >0 = inverted trapezoid) */
+    notchSize?: number;
+  };
+  positionStripes?: {
+    x: number;
+    width: number;
+    topY: number;
+    bottomY: number;
+    gap: number;
+    mapping: Array<{ position: string; color: string }>;
+  } | {
+    style: 'diagonal';
+    stripeWidth: number;
+    stripeGap: number;
+    /** How far inward (horizontally) the stripes extend from the card edge */
+    inset: number;
+    /** Y coordinate of the top edge of the stripe zone (usually aligns with footer bar top) */
+    topY: number;
+    /** Fixed stripe colors from outermost to innermost */
+    colors: string[];
+    mapping: Array<{ position: string; color: string }>;
+  };
+  photographerCredit?: {
+    x: number;
+    y: number;
+    fontSize: number;
+    fontStyle?: string;
+    color: string;
+    textAlign: 'left' | 'right' | 'center';
+  };
+  cardBorder?: {
+    width: number;
+    color: string;
+  };
 };
 
 export type TemplateLayout = Usqc26LayoutV1;
@@ -301,6 +355,8 @@ export type TournamentConfig = {
     showJerseyNumber: boolean;
     positions?: string[];
     logoOverrideKey?: string;
+    positionMultiSelect?: boolean;
+    maxPositions?: number;
   }>;
   templates?: TemplateDefinition[];
   defaultTemplates?: TemplateDefaults;

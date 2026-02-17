@@ -15,7 +15,7 @@ export const MAX_TITLE_LENGTH = 50
 export const MAX_CAPTION_LENGTH = 100
 export const MAX_PHOTOGRAPHER_LENGTH = 48
 export const MAX_TEAM_LENGTH = 64
-export const MAX_POSITION_LENGTH = 32
+export const MAX_POSITION_LENGTH = 64
 export const MAX_JERSEY_LENGTH = 2
 
 export const JERSEY_PATTERN = /^\d{1,2}$/
@@ -170,6 +170,72 @@ export const NationalTeamLayoutSchema = z.object({
   logo: NationalTeamLogoSchema,
 })
 
+export const HeaderBarLayoutSchema = z.object({
+  height: z.number(),
+  color: z.string(),
+  fontSize: z.number(),
+  fontStyle: z.string(),
+  textColor: z.string(),
+  textY: z.number(),
+  paddingX: z.number(),
+  notchSize: z.number().optional(),
+})
+
+export const FooterBarLayoutSchema = z.object({
+  y: z.number(),
+  height: z.number(),
+  color: z.string(),
+  fontSize: z.number(),
+  fontStyle: z.string(),
+  textColor: z.string(),
+  textY: z.number(),
+  paddingX: z.number(),
+  notchSize: z.number().optional(),
+})
+
+export const PositionStripeMappingSchema = z.object({
+  position: z.string(),
+  color: z.string(),
+})
+
+export const PositionStripesVerticalSchema = z.object({
+  x: z.number(),
+  width: z.number(),
+  topY: z.number(),
+  bottomY: z.number(),
+  gap: z.number(),
+  mapping: z.array(PositionStripeMappingSchema),
+})
+
+export const PositionStripesDiagonalSchema = z.object({
+  style: z.literal('diagonal'),
+  stripeWidth: z.number(),
+  stripeGap: z.number(),
+  inset: z.number(),
+  topY: z.number(),
+  colors: z.array(z.string()),
+  mapping: z.array(PositionStripeMappingSchema),
+})
+
+export const PositionStripesLayoutSchema = z.union([
+  PositionStripesVerticalSchema,
+  PositionStripesDiagonalSchema,
+])
+
+export const PhotographerCreditLayoutSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  fontSize: z.number(),
+  fontStyle: z.string().optional(),
+  color: z.string(),
+  textAlign: z.enum(['left', 'right', 'center']),
+})
+
+export const CardBorderLayoutSchema = z.object({
+  width: z.number(),
+  color: z.string(),
+})
+
 export const Usqc26LayoutV1Schema = z.object({
   kind: z.literal('usqc26-v1'),
   palette: LayoutColorPaletteSchema,
@@ -183,6 +249,11 @@ export const Usqc26LayoutV1Schema = z.object({
   rareCard: RareCardLayoutSchema,
   superRare: SuperRareLayoutSchema,
   nationalTeam: NationalTeamLayoutSchema,
+  headerBar: HeaderBarLayoutSchema.optional(),
+  footerBar: FooterBarLayoutSchema.optional(),
+  positionStripes: PositionStripesLayoutSchema.optional(),
+  photographerCredit: PhotographerCreditLayoutSchema.optional(),
+  cardBorder: CardBorderLayoutSchema.optional(),
 })
 
 export const TemplateLayoutSchema = Usqc26LayoutV1Schema

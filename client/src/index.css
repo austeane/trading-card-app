@@ -275,7 +275,7 @@ body {
 
 .canvas-frame {
   background-color: var(--bg-surface);
-  border-radius: var(--radius-lg);
+  border-radius: 0;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }

@@ -50,7 +50,7 @@ const DEFAULT_TEMPLATE_FLAGS: TemplateFlags = {
 export type RenderCardInput = {
   card: Card
   config: TournamentConfig
-  imageUrl: string
+  imageUrl?: string
   resolveAssetUrl: (key: string) => string
   templateId?: string
 }
@@ -84,6 +84,16 @@ export const resolveTemplateSnapshot = (input: {
       layout,
     },
   }
+}
+
+/** Shift a hex color's lightness by `amount` (negative = darker). */
+function shiftColor(hex: string, amount: number): string {
+  const c = hex.replace('#', '')
+  const num = parseInt(c.length === 3 ? c.split('').map((ch) => ch + ch).join('') : c, 16)
+  const r = Math.max(0, Math.min(255, ((num >> 16) & 0xff) + amount))
+  const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amount))
+  const b = Math.max(0, Math.min(255, (num & 0xff) + amount))
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -871,6 +881,209 @@ function drawNationalTeamName(
   ctx.restore()
 }
 
+function drawHeaderBar(
+  ctx: CanvasRenderingContext2D,
+  firstName: string,
+  lastName: string,
+  jerseyNumber: string | undefined,
+  layout: Usqc26LayoutV1
+) {
+  const headerBar = layout.headerBar
+  if (!headerBar) return
+
+  ctx.save()
+
+  const notch = headerBar.notchSize ?? 0
+
+  // Draw header bar as trapezoid (wider at top, angled bottom corners)
+  ctx.beginPath()
+  ctx.moveTo(0, 0) // top-left
+  ctx.lineTo(CARD_WIDTH, 0) // top-right
+  ctx.lineTo(CARD_WIDTH - notch, headerBar.height) // bottom-right (angled inward)
+  ctx.lineTo(notch, headerBar.height) // bottom-left (angled inward)
+  ctx.closePath()
+
+  ctx.fillStyle = headerBar.color
+  ctx.fill()
+
+  // Add black outline to match Canva template styling
+  const barStrokeColor = layout.cardBorder?.color ?? '#000000'
+  const barStrokeWidth = Math.max(2, (layout.cardBorder?.width ?? 3) * 0.9)
+  ctx.strokeStyle = barStrokeColor
+  ctx.lineWidth = barStrokeWidth
+  ctx.lineJoin = 'miter'
+  ctx.miterLimit = 2
+  ctx.stroke()
+
+  // Draw name + number text
+  const nameText = `${firstName} ${lastName}`.trim().toUpperCase()
+  const displayText = jerseyNumber ? `${nameText} #${jerseyNumber}` : nameText
+
+  ctx.font = `${headerBar.fontStyle} ${headerBar.fontSize}px ${layout.typography.fontFamily}`
+  ctx.fillStyle = headerBar.textColor
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(displayText, CARD_WIDTH / 2, headerBar.textY)
+
+  ctx.restore()
+}
+
+function drawFooterBar(
+  ctx: CanvasRenderingContext2D,
+  teamName: string,
+  layout: Usqc26LayoutV1
+) {
+  const footerBar = layout.footerBar
+  if (!footerBar) return
+
+  ctx.save()
+
+  const notch = footerBar.notchSize ?? 0
+
+  // Draw footer bar as inverted trapezoid (wider at bottom, angled top corners)
+  ctx.beginPath()
+  ctx.moveTo(notch, footerBar.y) // top-left (angled inward)
+  ctx.lineTo(CARD_WIDTH - notch, footerBar.y) // top-right (angled inward)
+  ctx.lineTo(CARD_WIDTH, footerBar.y + footerBar.height) // bottom-right
+  ctx.lineTo(0, footerBar.y + footerBar.height) // bottom-left
+  ctx.closePath()
+
+  ctx.fillStyle = footerBar.color
+  ctx.fill()
+
+  // Add black outline to match Canva template styling
+  const barStrokeColor = layout.cardBorder?.color ?? '#000000'
+  const barStrokeWidth = Math.max(2, (layout.cardBorder?.width ?? 3) * 0.9)
+  ctx.strokeStyle = barStrokeColor
+  ctx.lineWidth = barStrokeWidth
+  ctx.lineJoin = 'miter'
+  ctx.miterLimit = 2
+  ctx.stroke()
+
+  // Draw team name text
+  ctx.font = `${footerBar.fontStyle} ${footerBar.fontSize}px ${layout.typography.fontFamily}`
+  ctx.fillStyle = footerBar.textColor
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(teamName.toUpperCase(), CARD_WIDTH / 2, footerBar.y + footerBar.textY)
+
+  ctx.restore()
+}
+
+function drawPositionStripesQc(
+  ctx: CanvasRenderingContext2D,
+  _positionString: string,
+  layout: Usqc26LayoutV1
+) {
+  const stripes = layout.positionStripes
+  if (!stripes) return
+
+  // Diagonal stripe style - fixed side stripes to match Canva side accents
+  if ('style' in stripes && stripes.style === 'diagonal') {
+    const { stripeWidth, stripeGap, colors, topY, inset } = stripes
+    const bottomY = CARD_HEIGHT
+    const step = stripeWidth + stripeGap
+
+    ctx.save()
+
+    // LEFT side: diagonal bands from edge (bottom) to inset (top)
+    for (let i = 0; i < colors.length; i++) {
+      const offset = i * step
+      const bottomStart = offset
+      const bottomEnd = offset + stripeWidth
+      const topStart = inset + offset
+      const topEnd = inset + offset + stripeWidth
+
+      ctx.beginPath()
+      ctx.moveTo(bottomStart, bottomY)
+      ctx.lineTo(bottomEnd, bottomY)
+      ctx.lineTo(topEnd, topY)
+      ctx.lineTo(topStart, topY)
+      ctx.closePath()
+      ctx.fillStyle = colors[i]
+      ctx.fill()
+    }
+
+    // RIGHT side: mirrored diagonal bands
+    for (let i = 0; i < colors.length; i++) {
+      const offset = i * step
+      const bottomStart = CARD_WIDTH - offset
+      const bottomEnd = CARD_WIDTH - offset - stripeWidth
+      const topStart = CARD_WIDTH - inset - offset
+      const topEnd = CARD_WIDTH - inset - offset - stripeWidth
+
+      ctx.beginPath()
+      ctx.moveTo(bottomStart, bottomY)
+      ctx.lineTo(bottomEnd, bottomY)
+      ctx.lineTo(topEnd, topY)
+      ctx.lineTo(topStart, topY)
+      ctx.closePath()
+      ctx.fillStyle = colors[i]
+      ctx.fill()
+    }
+
+    ctx.restore()
+    return
+  }
+
+  // Legacy vertical stripe style - narrow type by checking for 'x' property
+  if (!('x' in stripes)) return
+  const verticalStripes = stripes
+
+  const selectedPositions = _positionString.split(',').map(p => p.trim()).filter(Boolean)
+  if (selectedPositions.length === 0) return
+
+  const totalHeight = verticalStripes.bottomY - verticalStripes.topY
+  const totalGaps = (selectedPositions.length - 1) * verticalStripes.gap
+  const stripeHeight = (totalHeight - totalGaps) / selectedPositions.length
+
+  selectedPositions.forEach((pos, i) => {
+    const mapping = verticalStripes.mapping.find(m => m.position === pos)
+    if (!mapping) return
+
+    const y = verticalStripes.topY + i * (stripeHeight + verticalStripes.gap)
+
+    ctx.save()
+    ctx.fillStyle = mapping.color
+    ctx.fillRect(verticalStripes.x, y, verticalStripes.width, stripeHeight)
+    ctx.restore()
+  })
+}
+
+function drawPhotographerCreditQc(
+  ctx: CanvasRenderingContext2D,
+  photographer: string,
+  layout: Usqc26LayoutV1
+) {
+  const credit = layout.photographerCredit
+  if (!credit || !photographer) return
+
+  ctx.save()
+  const fontStyle = credit.fontStyle ?? '400'
+  ctx.font = `${fontStyle} ${credit.fontSize}px ${layout.typography.fontFamily}`
+  ctx.fillStyle = credit.color
+  ctx.textAlign = credit.textAlign
+  ctx.textBaseline = 'middle'
+  ctx.fillText(photographer, credit.x, credit.y)
+  ctx.restore()
+}
+
+function drawCardBorder(
+  ctx: CanvasRenderingContext2D,
+  layout: Usqc26LayoutV1
+) {
+  const border = layout.cardBorder
+  if (!border) return
+
+  ctx.save()
+  ctx.strokeStyle = border.color
+  ctx.lineWidth = border.width
+  // Draw the border inset by half the line width so it's fully visible
+  const half = border.width / 2
+  ctx.strokeRect(half, half, CARD_WIDTH - border.width, CARD_HEIGHT - border.width)
+  ctx.restore()
+}
+
 function getTeamInfo(card: Card, config: TournamentConfig) {
   if ('teamId' in card && card.teamId) {
     const team = config.teams.find((entry) => entry.id === card.teamId)
@@ -910,6 +1123,7 @@ async function renderCardFrame(
     return
   }
   const { theme, flags, overlayKey, overlayPlacement } = templateSnapshot
+  const isQcStyle = !!(layout.headerBar && layout.footerBar)
 
   // Explicitly load font before rendering to ensure it's available for canvas
   if (document.fonts?.load) {
@@ -924,15 +1138,32 @@ async function renderCardFrame(
       `500 italic ${layout.superRare.lastNameSize}px ${fontFamily}`,
       `500 ${layout.nationalTeam.nameFontSize}px ${fontFamily}`,
     ])
+    if (layout.headerBar) {
+      fontLoads.add(`${layout.headerBar.fontStyle} ${layout.headerBar.fontSize}px ${fontFamily}`)
+    }
+    if (layout.footerBar) {
+      fontLoads.add(`${layout.footerBar.fontStyle} ${layout.footerBar.fontSize}px ${fontFamily}`)
+    }
     await Promise.all([...fontLoads].map((font) => document.fonts.load(font)))
   }
 
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
 
-  // 1. Draw the photo (full bleed)
-  const img = await loadImage(imageUrl)
-  drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+  // 1. Draw the photo (full bleed) or placeholder gradient
+  if (imageUrl) {
+    const img = await loadImage(imageUrl)
+    drawCroppedImage(ctx, img, crop, 0, 0, CARD_WIDTH, CARD_HEIGHT)
+  } else {
+    // Draw a placeholder gradient background
+    const primaryColor = config.branding.primaryColor || '#1e3a5f'
+    const grad = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT)
+    grad.addColorStop(0, primaryColor)
+    grad.addColorStop(0.5, shiftColor(primaryColor, -30))
+    grad.addColorStop(1, shiftColor(primaryColor, -60))
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+  }
 
   // 2. Draw template overlays below text
   if (flags.showGradient) {
@@ -947,119 +1178,157 @@ async function renderCardFrame(
     drawWatermarkJersey(ctx, jerseyNumber, theme, layout)
   }
 
-  // 3. Draw content boxes BEFORE the frame (so frame covers them)
-  const isStandardPlayer = card.cardType !== 'rare' && card.cardType !== 'super-rare' && card.cardType !== 'national-team'
-  if (isStandardPlayer) {
-    const firstName = 'firstName' in card ? card.firstName ?? '' : ''
-    const lastName = 'lastName' in card ? card.lastName ?? '' : ''
-    if (firstName || lastName) {
-      drawAngledNameBoxes(ctx, firstName, lastName, layout)
-    }
-  } else if (card.cardType === 'rare') {
-    // Rare card: draw title/caption boxes before frame
-    const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
-    const caption = 'caption' in card ? card.caption ?? '' : ''
-    drawRareCardContent(ctx, title, caption, layout)
-  }
-
-  // 4. Draw the frame overlay
-  drawFrame(ctx, layout)
-
   const overlayImg = await loadImageSafe(overlayKey ? resolveAssetUrl(overlayKey) : null)
-  if (overlayImg && overlayPlacement === 'belowText') {
-    drawOverlay(ctx, overlayImg)
-  }
 
-  // 5. Draw team logo (or override logo for certain card types like media/official)
-  const team = getTeamInfo(card, config)
-  const cardTypeConfig = config.cardTypes.find((ct) => ct.type === card.cardType)
-  const logoKey = cardTypeConfig?.logoOverrideKey || team?.logoKey || config.branding.tournamentLogoKey
-  const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
-  if (logoImg) {
-    const basePlacement = card.cardType === 'national-team' ? layout.nationalTeam.logo : layout.teamLogo
-    const placement: LogoPlacement = {
-      ...basePlacement,
-      strokeWidth: layout.teamLogo.strokeWidth,
-      strokeColor: layout.teamLogo.strokeColor,
-    }
-    drawLogo(ctx, logoImg, placement)
-  }
-
-  // 6. Draw event indicator badge (if configured)
-  const eventIndicator = config.branding.eventIndicator
-  if (eventIndicator) {
-    drawEventBadge(ctx, eventIndicator, layout)
-  }
-
-  // 7. Load camera icon for bottom bar
-  const cameraImg = await loadImageSafe(cameraIconUrl)
-
-  // 8. Draw card-type-specific content
-  if (card.cardType === 'rare') {
-    // Rare card: title/caption already drawn before frame
-    // Just draw bottom bar
-    const photographer = card.photographer ?? ''
-    drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
-
-  } else if (card.cardType === 'super-rare') {
-    // Super rare: centered name style
+  if (isQcStyle) {
+    // QC-style rendering path: header bar + footer bar + position stripes
+    const team = getTeamInfo(card, config)
     const firstName = 'firstName' in card ? card.firstName ?? '' : ''
     const lastName = 'lastName' in card ? card.lastName ?? '' : ''
-    drawSuperRareName(ctx, firstName, lastName, layout)
-
-    // Position and number for super-rare
-    if ('position' in card && card.position && 'jerseyNumber' in card && card.jerseyNumber) {
-      drawPositionNumber(ctx, card.position, card.jerseyNumber, layout)
-    }
-
-    // Bottom bar
+    const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+    const position = 'position' in card ? card.position ?? '' : ''
     const photographer = card.photographer ?? ''
     const teamName = team?.name ?? ''
-    drawBottomBar(ctx, photographer, teamName, layout, 'super-rare', cameraImg)
 
-  } else if (card.cardType === 'national-team') {
-    // National team (uncommon): name at top
-    const firstName = 'firstName' in card ? card.firstName ?? '' : ''
-    const lastName = 'lastName' in card ? card.lastName ?? '' : ''
-    const fullName = `${firstName} ${lastName}`.trim()
-    drawNationalTeamName(ctx, fullName, layout)
+    // Draw position stripes FIRST (behind bars)
+    drawPositionStripesQc(ctx, position, layout)
 
-    // Bottom bar with team name and jersey number
-    const photographer = card.photographer ?? ''
-    const teamName = team?.name ?? config.branding?.defaultTeamName ?? 'NATIONAL TEAM'
-    const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber ?? '' : ''
-    const bottomText = jerseyNumber ? `${teamName} #${jerseyNumber}` : teamName
-    drawBottomBar(ctx, photographer, bottomText, layout, 'uncommon', cameraImg)
+    // Draw header bar with name + number (trapezoid)
+    drawHeaderBar(ctx, firstName, lastName, jerseyNumber, layout)
 
+    // Draw footer bar with team name (inverted trapezoid)
+    drawFooterBar(ctx, teamName, layout)
+
+    // Draw overlay
+    if (overlayImg && overlayPlacement === 'belowText') {
+      drawOverlay(ctx, overlayImg)
+    }
+
+    // Draw photographer credit (just above footer bar)
+    drawPhotographerCreditQc(ctx, photographer, layout)
+
+    if (overlayImg && overlayPlacement === 'aboveText') {
+      drawOverlay(ctx, overlayImg)
+    }
+
+    // Draw thin card border on top of everything
+    drawCardBorder(ctx, layout)
   } else {
-    // Standard player card (includes team-staff, media, official, tournament-staff)
-    // Note: Name boxes are drawn earlier (before frame) so they appear underneath
+    // Standard USQC-style rendering path
 
-    const photographer = card.photographer ?? ''
-    const position = 'position' in card ? card.position ?? '' : ''
-    const rarity = card.rarity ?? 'common'
+    // 3. Draw content boxes BEFORE the frame (so frame covers them)
+    const isStandardPlayer = card.cardType !== 'rare' && card.cardType !== 'super-rare' && card.cardType !== 'national-team'
+    if (isStandardPlayer) {
+      const firstName = 'firstName' in card ? card.firstName ?? '' : ''
+      const lastName = 'lastName' in card ? card.lastName ?? '' : ''
+      if (firstName || lastName) {
+        drawAngledNameBoxes(ctx, firstName, lastName, layout)
+      }
+    } else if (card.cardType === 'rare') {
+      // Rare card: draw title/caption boxes before frame
+      const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
+      const caption = 'caption' in card ? card.caption ?? '' : ''
+      drawRareCardContent(ctx, title, caption, layout)
+    }
 
-    // For media, official, and tournament-staff: show position in bottom bar instead of top-right
-    const isPositionInBottomBar = card.cardType === 'media' || card.cardType === 'official' || card.cardType === 'tournament-staff'
+    // 4. Draw the frame overlay
+    drawFrame(ctx, layout)
 
-    if (isPositionInBottomBar) {
-      // Position goes in bottom bar (where team name normally is)
-      drawBottomBar(ctx, photographer, position, layout, rarity, cameraImg)
-    } else {
-      // Position and number in top-right (jersey number is optional for some card types like team-staff)
-      if (position) {
-        const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
-        drawPositionNumber(ctx, position, jerseyNumber, layout)
+    if (overlayImg && overlayPlacement === 'belowText') {
+      drawOverlay(ctx, overlayImg)
+    }
+
+    // 5. Draw team logo (or override logo for certain card types like media/official)
+    const team = getTeamInfo(card, config)
+    const cardTypeConfig = config.cardTypes.find((ct) => ct.type === card.cardType)
+    const logoKey = cardTypeConfig?.logoOverrideKey || team?.logoKey || config.branding.tournamentLogoKey
+    const logoImg = await loadImageSafe(logoKey ? resolveAssetUrl(logoKey) : null)
+    if (logoImg) {
+      const basePlacement = card.cardType === 'national-team' ? layout.nationalTeam.logo : layout.teamLogo
+      const placement: LogoPlacement = {
+        ...basePlacement,
+        strokeWidth: layout.teamLogo.strokeWidth,
+        strokeColor: layout.teamLogo.strokeColor,
+      }
+      drawLogo(ctx, logoImg, placement)
+    }
+
+    // 6. Draw event indicator badge (if configured)
+    const eventIndicator = config.branding.eventIndicator
+    if (eventIndicator) {
+      drawEventBadge(ctx, eventIndicator, layout)
+    }
+
+    // 7. Load camera icon for bottom bar
+    const cameraImg = await loadImageSafe(cameraIconUrl)
+
+    // 8. Draw card-type-specific content
+    if (card.cardType === 'rare') {
+      // Rare card: title/caption already drawn before frame
+      // Just draw bottom bar
+      const photographer = card.photographer ?? ''
+      drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
+
+    } else if (card.cardType === 'super-rare') {
+      // Super rare: centered name style
+      const firstName = 'firstName' in card ? card.firstName ?? '' : ''
+      const lastName = 'lastName' in card ? card.lastName ?? '' : ''
+      drawSuperRareName(ctx, firstName, lastName, layout)
+
+      // Position and number for super-rare
+      if ('position' in card && card.position && 'jerseyNumber' in card && card.jerseyNumber) {
+        drawPositionNumber(ctx, card.position, card.jerseyNumber, layout)
       }
 
-      // Bottom bar with team name
+      // Bottom bar
+      const photographer = card.photographer ?? ''
       const teamName = team?.name ?? ''
-      drawBottomBar(ctx, photographer, teamName, layout, rarity, cameraImg)
-    }
-  }
+      drawBottomBar(ctx, photographer, teamName, layout, 'super-rare', cameraImg)
 
-  if (overlayImg && overlayPlacement === 'aboveText') {
-    drawOverlay(ctx, overlayImg)
+    } else if (card.cardType === 'national-team') {
+      // National team (uncommon): name at top
+      const firstName = 'firstName' in card ? card.firstName ?? '' : ''
+      const lastName = 'lastName' in card ? card.lastName ?? '' : ''
+      const fullName = `${firstName} ${lastName}`.trim()
+      drawNationalTeamName(ctx, fullName, layout)
+
+      // Bottom bar with team name and jersey number
+      const photographer = card.photographer ?? ''
+      const teamName = team?.name ?? config.branding?.defaultTeamName ?? 'NATIONAL TEAM'
+      const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber ?? '' : ''
+      const bottomText = jerseyNumber ? `${teamName} #${jerseyNumber}` : teamName
+      drawBottomBar(ctx, photographer, bottomText, layout, 'uncommon', cameraImg)
+
+    } else {
+      // Standard player card (includes team-staff, media, official, tournament-staff)
+      // Note: Name boxes are drawn earlier (before frame) so they appear underneath
+
+      const photographer = card.photographer ?? ''
+      const position = 'position' in card ? card.position ?? '' : ''
+      const rarity = card.rarity ?? 'common'
+
+      // For media, official, and tournament-staff: show position in bottom bar instead of top-right
+      const isPositionInBottomBar = card.cardType === 'media' || card.cardType === 'official' || card.cardType === 'tournament-staff'
+
+      if (isPositionInBottomBar) {
+        // Position goes in bottom bar (where team name normally is)
+        drawBottomBar(ctx, photographer, position, layout, rarity, cameraImg)
+      } else {
+        // Position and number in top-right (jersey number is optional for some card types like team-staff)
+        if (position) {
+          const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+          drawPositionNumber(ctx, position, jerseyNumber, layout)
+        }
+
+        // Bottom bar with team name
+        const teamName = team?.name ?? ''
+        drawBottomBar(ctx, photographer, teamName, layout, rarity, cameraImg)
+      }
+    }
+
+    if (overlayImg && overlayPlacement === 'aboveText') {
+      drawOverlay(ctx, overlayImg)
+    }
   }
 }
 

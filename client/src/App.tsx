@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   ALLOWED_UPLOAD_TYPES as ALLOWED_UPLOAD_TYPES_LIST,
   CARD_ASPECT,
+  TRIM_ASPECT,
   JERSEY_PATTERN,
   MAX_CAPTION_LENGTH,
   MAX_JERSEY_LENGTH,
@@ -13,8 +14,9 @@ import {
   MAX_TEAM_LENGTH,
   MAX_TITLE_LENGTH,
   MAX_UPLOAD_BYTES,
-  TRIM_ASPECT,
+  findTemplate,
   resolveTemplateId,
+  resolveTemplateLayout,
   type ApiResponse,
   type Card,
   type CardType,
@@ -23,7 +25,7 @@ import {
   type TournamentListEntry,
   USQC_2026_TOURNAMENT,
 } from 'shared'
-import { renderPreviewTrim } from './renderCard'
+import { renderCard, renderPreviewTrim } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import { recordFeedbackEvent } from './feedbackLog'
@@ -662,10 +664,20 @@ function App() {
   useEffect(() => {
     if (!cardTypeConfig?.positions || cardTypeConfig.positions.length === 0) return
     if (!form.position) return
-    if (!cardTypeConfig.positions.includes(form.position)) {
-      setForm((prev) => ({ ...prev, position: '' }))
+    if (cardTypeConfig.positionMultiSelect) {
+      // Filter out invalid positions from comma-separated string
+      const selected = form.position.split(',').map(p => p.trim()).filter(Boolean)
+      const valid = selected.filter(p => cardTypeConfig.positions!.includes(p))
+      const newValue = valid.join(',')
+      if (newValue !== form.position) {
+        setForm((prev) => ({ ...prev, position: newValue }))
+      }
+    } else {
+      if (!cardTypeConfig.positions.includes(form.position)) {
+        setForm((prev) => ({ ...prev, position: '' }))
+      }
     }
-  }, [cardTypeConfig?.positions, form.position])
+  }, [cardTypeConfig?.positions, cardTypeConfig?.positionMultiSelect, form.position])
 
   const buildPayload = (): SavePayload => ({
     tournamentId: toOptional(form.tournamentId),
@@ -1506,6 +1518,19 @@ function App() {
   const uploadedCropperUrl = uploadedPhoto?.publicUrl ? resolveMediaUrl(uploadedPhoto.publicUrl) : null
   const cropperImageUrl = photo?.localUrl ?? uploadedCropperUrl
 
+  const isQcStylePreview = useMemo(() => {
+    if (!tournamentConfig || !form.cardType) return false
+
+    const templateId = resolveTemplateId(
+      { templateId: toOptional(form.templateId), cardType: form.cardType },
+      tournamentConfig
+    )
+    const template = findTemplate(tournamentConfig, templateId)
+    const layout = resolveTemplateLayout(template)
+
+    return !!(layout.headerBar && layout.footerBar)
+  }, [form.cardType, form.templateId, tournamentConfig])
+
   const buildCardForRender = useCallback(
     (timestamp: string): Card | null => {
       if (!form.cardType || !form.tournamentId) return null
@@ -1551,7 +1576,7 @@ function App() {
   )
 
   useEffect(() => {
-    if (!tournamentConfig || !cropperImageUrl || !normalizedCrop || !form.cardType) {
+    if (!tournamentConfig || !form.cardType) {
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev)
         return null
@@ -1566,10 +1591,11 @@ function App() {
         const timestamp = new Date().toISOString()
         const card = buildCardForRender(timestamp)
         if (!card) return
-        const blob = await renderPreviewTrim({
+        const renderer = isQcStylePreview ? renderCard : renderPreviewTrim
+        const blob = await renderer({
           card,
           config: tournamentConfig,
-          imageUrl: cropperImageUrl,
+          imageUrl: cropperImageUrl || undefined,
           resolveAssetUrl: assetUrlForKey,
           templateId: toOptional(form.templateId),
         })
@@ -1591,7 +1617,7 @@ function App() {
       cancelled = true
       clearTimeout(timeout)
     }
-  }, [buildCardForRender, cropperImageUrl, form.cardType, form.templateId, normalizedCrop, tournamentConfig])
+  }, [buildCardForRender, cropperImageUrl, form.cardType, form.templateId, isQcStylePreview, normalizedCrop, tournamentConfig])
 
   // Status badge styling
   const getStatusBadgeClass = (tone: string) => {
@@ -1979,7 +2005,7 @@ function App() {
                       />
                     </div>
                   ) : previewUrl ? (
-                    <div className="canvas-frame" style={{ aspectRatio: `${TRIM_ASPECT}` }}>
+                    <div className="canvas-frame" style={{ aspectRatio: `${isQcStylePreview ? CARD_ASPECT : TRIM_ASPECT}` }}>
                       <img
                         src={previewUrl}
                         alt="Live preview"
@@ -1989,7 +2015,7 @@ function App() {
                   ) : (
                     <div
                       className="flex items-center justify-center rounded-lg border-2 border-dashed border-[var(--border-light)] bg-white text-center text-sm text-[var(--text-muted)]"
-                      style={{ aspectRatio: `${TRIM_ASPECT}`, width: '300px' }}
+                      style={{ aspectRatio: `${isQcStylePreview ? CARD_ASPECT : TRIM_ASPECT}`, width: '300px' }}
                     >
                       {isSubmitInProgress ? (
                         <div className="flex flex-col items-center gap-3">
@@ -1999,7 +2025,7 @@ function App() {
                       ) : previewError ? (
                         <span className="text-[var(--accent-error)]">{previewError}</span>
                       ) : (
-                        <span>Upload a photo to see preview</span>
+                        <span>Select a card type to see preview</span>
                       )}
                     </div>
                   )}
@@ -2256,9 +2282,47 @@ function App() {
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="studio-label">
-                            Position <span className="studio-label-required">*</span>
+                            Position{cardTypeConfig?.positionMultiSelect ? 's' : ''} <span className="studio-label-required">*</span>
                           </label>
-                          {cardTypeConfig?.positions && cardTypeConfig.positions.length > 0 ? (
+                          {cardTypeConfig?.positionMultiSelect && cardTypeConfig.positions && cardTypeConfig.positions.length > 0 ? (
+                            <div
+                              ref={(el) => { fieldRefs.current.position = el }}
+                              className={`flex flex-wrap gap-2 ${hasEdited && validationErrors.position ? 'has-error' : ''}`}
+                            >
+                              {cardTypeConfig.positions.map((option) => {
+                                const selected = form.position.split(',').map(p => p.trim()).filter(Boolean)
+                                const isChecked = selected.includes(option)
+                                const atMax = !!(cardTypeConfig.maxPositions && selected.length >= cardTypeConfig.maxPositions && !isChecked)
+                                return (
+                                  <label
+                                    key={option}
+                                    className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm cursor-pointer select-none transition-colors ${
+                                      isChecked
+                                        ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]'
+                                        : atMax
+                                          ? 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)] cursor-not-allowed opacity-50'
+                                          : 'border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:border-[var(--accent)]'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      disabled={atMax}
+                                      onChange={() => {
+                                        const current = form.position.split(',').map(p => p.trim()).filter(Boolean)
+                                        const next = isChecked
+                                          ? current.filter(p => p !== option)
+                                          : [...current, option]
+                                        setForm(prev => ({ ...prev, position: next.join(',') }))
+                                      }}
+                                      className="sr-only"
+                                    />
+                                    {option}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          ) : cardTypeConfig?.positions && cardTypeConfig.positions.length > 0 ? (
                             <select
                               ref={(el) => { fieldRefs.current.position = el }}
                               value={form.position}
@@ -2339,7 +2403,12 @@ function App() {
                   <div className="preview-meta-detail">
                     {form.cardType === 'rare'
                       ? form.caption || 'Caption'
-                      : [form.position || 'Position', selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : '')]
+                      : [
+                            cardTypeConfig?.positionMultiSelect
+                              ? (form.position ? form.position.split(',').map(p => p.trim()).filter(Boolean).join(' / ') : 'Position')
+                              : (form.position || 'Position'),
+                            selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : '')
+                          ]
                           .filter(Boolean)
                           .join(' / ')}
                   </div>

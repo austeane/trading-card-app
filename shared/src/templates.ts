@@ -53,7 +53,7 @@ const resolveUsqc26Layout = (override?: TemplateLayoutOverride | null): Usqc26La
   if (override.kind && override.kind !== "usqc26-v1") {
     return deepClone(USQC26_LAYOUT_V1)
   }
-  const merged = mergeRecords(USQC26_LAYOUT_V1, override as Partial<Usqc26LayoutV1>)
+  const merged = mergeRecords(USQC26_LAYOUT_V1 as Usqc26LayoutV1, override as Partial<Usqc26LayoutV1>)
   return { ...merged, kind: "usqc26-v1" }
 }
 
