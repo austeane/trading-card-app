@@ -613,6 +613,209 @@ const applyStringUpdate = (
   return null
 }
 
+/**
+ * Validate and apply card field updates from a request body into an UpdateDraft.
+ * Shared by public PATCH /cards/:id and admin PATCH /admin/cards/:id.
+ * Returns an error string if validation fails, or null on success.
+ * When `mergePhoto` is true and photo fields are present, fetches existing photo from DynamoDB to merge.
+ */
+const applyCardFieldUpdates = async (
+  draft: UpdateDraft,
+  body: Record<string, unknown>,
+  cardId: string,
+): Promise<string | null> => {
+  let error =
+    applyStringUpdate(draft, body.teamId, 'teamId', MAX_TEAM_LENGTH, 'teamId') ||
+    applyStringUpdate(draft, body.teamName, 'teamName', MAX_TEAM_LENGTH, 'teamName') ||
+    applyStringUpdate(draft, body.position, 'position', MAX_POSITION_LENGTH, 'position') ||
+    applyStringUpdate(draft, body.templateId, 'templateId', MAX_TEMPLATE_LENGTH, 'templateId') ||
+    applyStringUpdate(draft, body.firstName, 'firstName', MAX_NAME_LENGTH, 'firstName') ||
+    applyStringUpdate(draft, body.lastName, 'lastName', MAX_NAME_LENGTH, 'lastName') ||
+    applyStringUpdate(draft, body.photographer, 'photographer', MAX_PHOTOGRAPHER_LENGTH, 'photographer') ||
+    applyStringUpdate(draft, body.title, 'title', MAX_TITLE_LENGTH, 'title') ||
+    applyStringUpdate(draft, body.caption, 'caption', MAX_CAPTION_LENGTH, 'caption')
+
+  if (!error && body.jerseyNumber !== undefined) {
+    if (body.jerseyNumber === null) {
+      pushRemove(draft, 'jerseyNumber')
+    } else if (typeof body.jerseyNumber === 'string') {
+      const trimmed = body.jerseyNumber.trim()
+      if (!trimmed) {
+        pushRemove(draft, 'jerseyNumber')
+      } else if (!JERSEY_PATTERN.test(trimmed)) {
+        error = 'jerseyNumber must be 1-2 digits'
+      } else {
+        pushSet(draft, 'jerseyNumber', trimmed)
+      }
+    } else {
+      error = 'jerseyNumber must be a string'
+    }
+  }
+
+  if (!error && body.photo !== undefined) {
+    if (body.photo === null) {
+      pushRemove(draft, 'photo')
+    } else if (isRecord(body.photo)) {
+      const photoUpdate: Card['photo'] = {}
+      if (body.photo.originalKey !== undefined && body.photo.originalKey !== null) {
+        if (typeof body.photo.originalKey !== 'string') {
+          error = 'photo.originalKey must be a string'
+        } else {
+          const trimmed = body.photo.originalKey.trim()
+          if (trimmed) {
+            const lengthError = ensureMaxLength(trimmed, 1024, 'photo.originalKey')
+            if (lengthError) {
+              error = lengthError
+            } else {
+              photoUpdate.originalKey = trimmed
+            }
+          }
+        }
+      }
+
+      if (!error && body.photo.cropKey !== undefined && body.photo.cropKey !== null) {
+        if (typeof body.photo.cropKey !== 'string') {
+          error = 'photo.cropKey must be a string'
+        } else {
+          const trimmed = body.photo.cropKey.trim()
+          if (trimmed) {
+            const lengthError = ensureMaxLength(trimmed, 1024, 'photo.cropKey')
+            if (lengthError) {
+              error = lengthError
+            } else {
+              photoUpdate.cropKey = trimmed
+            }
+          }
+        }
+      }
+
+      if (!error && body.photo.width !== undefined && body.photo.width !== null) {
+        const width = toNumber(body.photo.width)
+        if (width === undefined) {
+          error = 'photo.width must be a number'
+        } else {
+          photoUpdate.width = width
+        }
+      }
+
+      if (!error && body.photo.height !== undefined && body.photo.height !== null) {
+        const height = toNumber(body.photo.height)
+        if (height === undefined) {
+          error = 'photo.height must be a number'
+        } else {
+          photoUpdate.height = height
+        }
+      }
+
+      if (!error && body.photo.crop !== undefined && body.photo.crop !== null) {
+        const crop = pickCrop(body.photo.crop)
+        if (!crop) {
+          error = 'photo.crop is invalid'
+        } else {
+          photoUpdate.crop = crop
+        }
+      }
+
+      if (!error) {
+        if (Object.keys(photoUpdate).length === 0) {
+          error = 'photo must include at least one field'
+        } else {
+          const photoKeyError = validatePhotoKeys(cardId, photoUpdate)
+          if (photoKeyError) {
+            error = photoKeyError
+          } else {
+            // Fetch existing card to merge photo fields
+            // (DynamoDB can't update nested paths if parent doesn't exist)
+            const existingResult = await ddb.send(
+              new GetCommand({
+                TableName: Resource.Cards.name,
+                Key: { id: cardId },
+                ProjectionExpression: 'photo',
+              })
+            )
+            const existingPhoto = (existingResult.Item?.photo as Card['photo']) || {}
+            const mergedPhoto = { ...existingPhoto, ...photoUpdate }
+            pushSet(draft, 'photo', mergedPhoto)
+          }
+        }
+      }
+    } else {
+      error = 'photo must be an object'
+    }
+  }
+
+  return error
+}
+
+/**
+ * Convert an UpdateDraft into DynamoDB UpdateExpression components.
+ * Returns { sets, removes, names, values, nameFor } for callers to add
+ * their own condition-specific names/values (e.g. #status, :editToken).
+ */
+const buildDynamoUpdateExpression = (draft: UpdateDraft) => {
+  const entries = Object.entries(draft.set)
+  const sets: string[] = []
+  const removes: string[] = []
+  const names: Record<string, string> = {}
+  const nameMap = new Map<string, string>()
+  const values: Record<string, unknown> = {}
+
+  let valueIndex = 0
+  let nameIndex = 0
+  const nameFor = (segment: string) => {
+    const existing = nameMap.get(segment)
+    if (existing) return existing
+    const key = `#n${nameIndex++}`
+    nameMap.set(segment, key)
+    names[key] = segment
+    return key
+  }
+  const pathToExpression = (path: string) =>
+    path
+      .split('.')
+      .map((segment) => nameFor(segment))
+      .join('.')
+
+  for (const [path, value] of entries) {
+    const placeholder = `:v${valueIndex++}`
+    values[placeholder] = value
+    sets.push(`${pathToExpression(path)} = ${placeholder}`)
+  }
+
+  for (const path of draft.remove) {
+    removes.push(pathToExpression(path))
+  }
+
+  const updateExpressions: string[] = []
+  if (sets.length > 0) updateExpressions.push(`SET ${sets.join(', ')}`)
+  if (removes.length > 0) updateExpressions.push(`REMOVE ${removes.join(', ')}`)
+
+  return { updateExpression: updateExpressions.join(' '), names, values }
+}
+
+// Structured request logging — Lambda stdout goes to CloudWatch automatically
+app.use('*', async (c, next) => {
+  const start = Date.now()
+  await next()
+  const duration = Date.now() - start
+  const log: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    method: c.req.method,
+    path: c.req.path,
+    status: c.res.status,
+    duration,
+    ip: getClientIp(c),
+    userAgent: c.req.header('user-agent'),
+  }
+  const cardMatch = c.req.path.match(/\/cards\/([a-f0-9-]{36})/)
+  if (cardMatch) log.cardId = cardMatch[1]
+  const tournamentMatch = c.req.path.match(/\/tournaments\/([a-z0-9-]+)/)
+  if (tournamentMatch) log.tournamentId = tournamentMatch[1]
+  if (c.res.status >= 400) log.error = true
+  if (c.res.status >= 500) log.serverError = true
+  console.log(JSON.stringify(log))
+})
+
 app.use('*', async (c, next) => {
   if (shouldRateLimit(c.req.method) || c.req.path.startsWith('/admin/')) {
     const ip = getClientIp(c)
@@ -1615,179 +1818,23 @@ app.patch('/cards/:id', async (c) => {
   }
 
   const draft: UpdateDraft = { set: {}, remove: [] }
-
-  let error =
-    applyStringUpdate(draft, body.teamId, 'teamId', MAX_TEAM_LENGTH, 'teamId') ||
-    applyStringUpdate(draft, body.teamName, 'teamName', MAX_TEAM_LENGTH, 'teamName') ||
-    applyStringUpdate(draft, body.position, 'position', MAX_POSITION_LENGTH, 'position') ||
-    applyStringUpdate(draft, body.templateId, 'templateId', MAX_TEMPLATE_LENGTH, 'templateId') ||
-    applyStringUpdate(draft, body.firstName, 'firstName', MAX_NAME_LENGTH, 'firstName') ||
-    applyStringUpdate(draft, body.lastName, 'lastName', MAX_NAME_LENGTH, 'lastName') ||
-    applyStringUpdate(draft, body.photographer, 'photographer', MAX_PHOTOGRAPHER_LENGTH, 'photographer') ||
-    applyStringUpdate(draft, body.title, 'title', MAX_TITLE_LENGTH, 'title') ||
-    applyStringUpdate(draft, body.caption, 'caption', MAX_CAPTION_LENGTH, 'caption')
-
-  if (!error && body.jerseyNumber !== undefined) {
-    if (body.jerseyNumber === null) {
-      pushRemove(draft, 'jerseyNumber')
-    } else if (typeof body.jerseyNumber === 'string') {
-      const trimmed = body.jerseyNumber.trim()
-      if (!trimmed) {
-        pushRemove(draft, 'jerseyNumber')
-      } else if (!JERSEY_PATTERN.test(trimmed)) {
-        error = 'jerseyNumber must be 1-2 digits'
-      } else {
-        pushSet(draft, 'jerseyNumber', trimmed)
-      }
-    } else {
-      error = 'jerseyNumber must be a string'
-    }
-  }
-
-  if (!error && body.photo !== undefined) {
-    if (body.photo === null) {
-      pushRemove(draft, 'photo')
-    } else if (isRecord(body.photo)) {
-      const photoUpdate: Card['photo'] = {}
-      if (body.photo.originalKey !== undefined && body.photo.originalKey !== null) {
-        if (typeof body.photo.originalKey !== 'string') {
-          error = 'photo.originalKey must be a string'
-        } else {
-          const trimmed = body.photo.originalKey.trim()
-          if (trimmed) {
-            const lengthError = ensureMaxLength(trimmed, 1024, 'photo.originalKey')
-            if (lengthError) {
-              error = lengthError
-            } else {
-              photoUpdate.originalKey = trimmed
-            }
-          }
-        }
-      }
-
-      if (!error && body.photo.cropKey !== undefined && body.photo.cropKey !== null) {
-        if (typeof body.photo.cropKey !== 'string') {
-          error = 'photo.cropKey must be a string'
-        } else {
-          const trimmed = body.photo.cropKey.trim()
-          if (trimmed) {
-            const lengthError = ensureMaxLength(trimmed, 1024, 'photo.cropKey')
-            if (lengthError) {
-              error = lengthError
-            } else {
-              photoUpdate.cropKey = trimmed
-            }
-          }
-        }
-      }
-
-      if (!error && body.photo.width !== undefined && body.photo.width !== null) {
-        const width = toNumber(body.photo.width)
-        if (width === undefined) {
-          error = 'photo.width must be a number'
-        } else {
-          photoUpdate.width = width
-        }
-      }
-
-      if (!error && body.photo.height !== undefined && body.photo.height !== null) {
-        const height = toNumber(body.photo.height)
-        if (height === undefined) {
-          error = 'photo.height must be a number'
-        } else {
-          photoUpdate.height = height
-        }
-      }
-
-      if (!error && body.photo.crop !== undefined && body.photo.crop !== null) {
-        const crop = pickCrop(body.photo.crop)
-        if (!crop) {
-          error = 'photo.crop is invalid'
-        } else {
-          photoUpdate.crop = crop
-        }
-      }
-
-      if (!error) {
-        if (Object.keys(photoUpdate).length === 0) {
-          error = 'photo must include at least one field'
-        } else {
-          const photoKeyError = validatePhotoKeys(id, photoUpdate)
-          if (photoKeyError) {
-            error = photoKeyError
-          } else {
-            // Fetch existing card to merge photo fields
-            // (DynamoDB can't update nested paths if parent doesn't exist)
-            const existingResult = await ddb.send(
-              new GetCommand({
-                TableName: Resource.Cards.name,
-                Key: { id },
-                ProjectionExpression: 'photo',
-              })
-            )
-            const existingPhoto = (existingResult.Item?.photo as Card['photo']) || {}
-            const mergedPhoto = { ...existingPhoto, ...photoUpdate }
-            pushSet(draft, 'photo', mergedPhoto)
-          }
-        }
-      }
-    } else {
-      error = 'photo must be an object'
-    }
-  }
-
+  const error = await applyCardFieldUpdates(draft, body, id)
   if (error) {
     return badRequest(c, error)
   }
 
   pushSet(draft, 'updatedAt', now)
 
-  const entries = Object.entries(draft.set)
-  const sets: string[] = []
-  const removes: string[] = []
-  const names: Record<string, string> = {}
-  const nameMap = new Map<string, string>()
-  const values: Record<string, unknown> = {}
-
-  let valueIndex = 0
-  let nameIndex = 0
-  const nameFor = (segment: string) => {
-    const existing = nameMap.get(segment)
-    if (existing) return existing
-    const key = `#n${nameIndex++}`
-    nameMap.set(segment, key)
-    names[key] = segment
-    return key
-  }
-  const pathToExpression = (path: string) =>
-    path
-      .split('.')
-      .map((segment) => nameFor(segment))
-      .join('.')
-
-  for (const [path, value] of entries) {
-    const placeholder = `:v${valueIndex++}`
-    values[placeholder] = value
-    sets.push(`${pathToExpression(path)} = ${placeholder}`)
-  }
-
-  for (const path of draft.remove) {
-    removes.push(pathToExpression(path))
-  }
-
+  const { updateExpression, names, values } = buildDynamoUpdateExpression(draft)
   values[':draft'] = 'draft'
   values[':editToken'] = editToken
-
-  const updateExpressions = []
-  if (sets.length > 0) updateExpressions.push(`SET ${sets.join(', ')}`)
-  if (removes.length > 0) updateExpressions.push(`REMOVE ${removes.join(', ')}`)
 
   try {
     const result = await ddb.send(
       new UpdateCommand({
         TableName: Resource.Cards.name,
         Key: { id },
-        UpdateExpression: updateExpressions.join(' '),
+        UpdateExpression: updateExpression,
         ConditionExpression: 'attribute_exists(#id) AND #status = :draft AND #editToken = :editToken',
         ExpressionAttributeNames: {
           ...names,
@@ -1920,7 +1967,8 @@ app.post('/cards/:id/submit', async (c) => {
   }
 
   const now = nowIso()
-  const statusCreatedAt = buildStatusCreatedAt('submitted', now)
+  const newStatus = renderKey ? 'rendered' : 'submitted'
+  const statusCreatedAt = buildStatusCreatedAt(newStatus, now)
   try {
     const setExpressions = ['#status = :status', '#updatedAt = :updatedAt', '#statusCreatedAt = :statusCreatedAt']
     const expressionAttributeNames: Record<string, string> = {
@@ -1929,7 +1977,7 @@ app.post('/cards/:id/submit', async (c) => {
       '#statusCreatedAt': 'statusCreatedAt',
     }
     const expressionAttributeValues: Record<string, unknown> = {
-      ':status': 'submitted',
+      ':status': newStatus,
       ':draft': 'draft',
       ':updatedAt': now,
       ':statusCreatedAt': statusCreatedAt,
@@ -1967,7 +2015,7 @@ app.post('/cards/:id/submit', async (c) => {
       ...card,
       renderKey: renderKey ?? card.renderKey,
       renderMeta: renderMeta ?? card.renderMeta,
-      status: 'submitted',
+      status: newStatus,
       updatedAt: now,
       statusCreatedAt,
     }
@@ -2047,70 +2095,63 @@ app.patch('/admin/cards/:id', async (c) => {
   const body = await getJsonBody(c)
   if (!isRecord(body)) return badRequest(c, 'Invalid request body')
 
-  const keys = Object.keys(body)
-  if (keys.length === 0 || keys.some((key) => key !== 'templateId')) {
-    return badRequest(c, 'Only templateId can be updated')
+  // Reject server-controlled and immutable fields
+  if ('status' in body || 'renderKey' in body || 'renderMeta' in body) {
+    return badRequest(c, 'status, renderKey, and renderMeta cannot be set via PATCH')
+  }
+  if ('cardType' in body || 'tournamentId' in body || 'type' in body) {
+    return badRequest(c, 'cardType and tournamentId cannot be changed')
   }
 
-  const templateIdInput = body.templateId
-  let templateId: string | null = null
-  let removeTemplateId = false
+  const draft: UpdateDraft = { set: {}, remove: [] }
+  const error = await applyCardFieldUpdates(draft, body, id)
+  if (error) {
+    return badRequest(c, error)
+  }
 
-  if (templateIdInput === null) {
-    removeTemplateId = true
-  } else if (typeof templateIdInput === 'string') {
-    const trimmed = templateIdInput.trim()
-    if (!trimmed) {
-      removeTemplateId = true
-    } else {
-      const error = ensureMaxLength(trimmed, MAX_TEMPLATE_LENGTH, 'templateId')
-      if (error) return badRequest(c, error)
-      templateId = trimmed
+  pushSet(draft, 'updatedAt', nowIso())
+
+  const { updateExpression, names, values } = buildDynamoUpdateExpression(draft)
+  values[':draft'] = 'draft'
+
+  try {
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: Resource.Cards.name,
+        Key: { id },
+        UpdateExpression: updateExpression,
+        ConditionExpression: 'attribute_exists(#id) AND #status <> :draft',
+        ExpressionAttributeNames: {
+          ...names,
+          '#id': 'id',
+          '#status': 'status',
+        },
+        ExpressionAttributeValues: values,
+        ReturnValues: 'ALL_NEW',
+      })
+    )
+
+    if (!result.Attributes) {
+      return c.json({ error: 'Card not found' }, 404)
     }
-  } else {
-    return badRequest(c, 'templateId must be a string')
+
+    return c.json(result.Attributes)
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException || (isRecord(err) && err.name === 'ConditionalCheckFailedException')) {
+      // Check if card exists vs is a draft
+      const latest = await ddb.send(
+        new GetCommand({
+          TableName: Resource.Cards.name,
+          Key: { id },
+        })
+      )
+      if (!latest.Item) {
+        return c.json({ error: 'Card not found' }, 404)
+      }
+      return c.json({ error: 'Cannot edit draft cards via admin endpoint' }, 400)
+    }
+    throw err
   }
-
-  const now = nowIso()
-  const setExpressions = ['#updatedAt = :updatedAt']
-  const removeExpressions: string[] = []
-  const names: Record<string, string> = {
-    '#id': 'id',
-    '#updatedAt': 'updatedAt',
-    '#templateId': 'templateId',
-  }
-  const values: Record<string, unknown> = {
-    ':updatedAt': now,
-  }
-
-  if (templateId) {
-    setExpressions.push('#templateId = :templateId')
-    values[':templateId'] = templateId
-  } else if (removeTemplateId) {
-    removeExpressions.push('#templateId')
-  }
-
-  const updateExpression = `SET ${setExpressions.join(', ')}${
-    removeExpressions.length > 0 ? ` REMOVE ${removeExpressions.join(', ')}` : ''
-  }`
-
-  const result = await ddb.send(
-    new UpdateCommand({
-      TableName: Resource.Cards.name,
-      Key: { id },
-      UpdateExpression: updateExpression,
-      ConditionExpression: 'attribute_exists(#id)',
-      ExpressionAttributeNames: names,
-      ExpressionAttributeValues: values,
-      ReturnValues: 'ALL_NEW',
-    })
-  )
-
-  if (!result.Attributes) {
-    return c.json({ error: 'Card not found' }, 404)
-  }
-
-  return c.json(result.Attributes)
 })
 
 app.get('/admin/cards/:id/photo-url', async (c) => {

@@ -68,8 +68,10 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
     lastName: 'Lopez',
     position,
     jerseyNumber: '12',
-    teamId: cardType === 'player' || cardType === 'team-staff' ? team?.id : undefined,
-    teamName: cardType === 'player' || cardType === 'team-staff' ? team?.name : undefined,
+    teamId: typeConfig?.teamFieldMode === 'freetext' ? undefined : (cardType === 'player' || cardType === 'team-staff' ? team?.id : undefined),
+    teamName: typeConfig?.teamFieldMode === 'freetext'
+      ? (typeConfig.teamFieldDefault ?? typeConfig.teamFieldLabel ?? 'Volunteer')
+      : (cardType === 'player' || cardType === 'team-staff' ? team?.name : undefined),
     photographer: 'Sample Photographer',
     photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
   }

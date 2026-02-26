@@ -1,0 +1,93 @@
+{
+  "id": "test-tournament-2026",
+  "name": "Test Tournament",
+  "year": 2026,
+  "branding": {
+    "tournamentLogoKey": "config/tournaments/test-tournament-2026/branding/logo.png",
+    "primaryColor": "#1b4278",
+    "eventIndicator": "TEST26"
+  },
+  "teams": [
+    {
+      "id": "team-alpha",
+      "name": "Team Alpha",
+      "logoKey": "config/tournaments/test-tournament-2026/teams/team-alpha.png"
+    },
+    {
+      "id": "team-beta",
+      "name": "Team Beta",
+      "logoKey": "config/tournaments/test-tournament-2026/teams/team-beta.png"
+    }
+  ],
+  "cardTypes": [
+    {
+      "type": "player",
+      "enabled": true,
+      "label": "Player",
+      "showTeamField": true,
+      "showJerseyNumber": true,
+      "positions": ["Chaser", "Beater", "Keeper", "Seeker"]
+    },
+    {
+      "type": "team-staff",
+      "enabled": true,
+      "label": "Team Staff",
+      "showTeamField": true,
+      "showJerseyNumber": false,
+      "positions": ["Coach", "Manager", "Trainer"]
+    },
+    {
+      "type": "media",
+      "enabled": true,
+      "label": "Media",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "positions": ["Photographer", "Videographer", "Reporter"]
+    },
+    {
+      "type": "official",
+      "enabled": true,
+      "label": "Official",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "positions": ["Head Referee", "Snitch Runner", "Goal Ref"]
+    },
+    {
+      "type": "tournament-staff",
+      "enabled": true,
+      "label": "Tournament Staff",
+      "showTeamField": false,
+      "showJerseyNumber": false,
+      "positions": ["Director", "Volunteer", "Medical"]
+    },
+    {
+      "type": "rare",
+      "enabled": true,
+      "label": "Rare",
+      "showTeamField": false,
+      "showJerseyNumber": false
+    }
+  ],
+  "templates": [
+    {
+      "id": "classic",
+      "label": "Classic"
+    },
+    {
+      "id": "noir",
+      "label": "Noir",
+      "theme": {
+        "gradientStart": "rgba(0, 0, 0, 0.7)",
+        "gradientEnd": "rgba(0, 0, 0, 0.9)"
+      }
+    }
+  ],
+  "defaultTemplates": {
+    "fallback": "classic",
+    "byCardType": {
+      "rare": "noir"
+    }
+  },
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}

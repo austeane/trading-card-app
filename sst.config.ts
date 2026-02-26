@@ -7,6 +7,9 @@ export default $config({
       removal: input?.stage === "production" ? "retain" : "remove",
       protect: ["production"].includes(input?.stage),
       home: "aws",
+      providers: {
+        aws: "7.12.0",
+      },
     };
   },
   async run() {
@@ -115,6 +118,34 @@ export default $config({
       rewrite: { regex: "^/c/(.*)$", to: "/config/$1" },
       cors: true,
     });
+
+    // CloudFront access logs → CloudWatch Logs (JSON) — production only
+    const isProduction = $app.stage === "production";
+    if (isProduction) {
+      const usEast1 = new aws.Provider("UsEast1Provider", { region: "us-east-1" });
+
+      const cfAccessLogs = new aws.cloudwatch.LogGroup("CloudFrontAccessLogs", {
+        name: `/aws/cloudfront/trading-card-app-${$app.stage}`,
+        retentionInDays: 90,
+      }, { provider: usEast1 });
+
+      const logSource = new aws.cloudwatch.LogDeliverySource("CFLogSource", {
+        name: `trading-card-app-${$app.stage}-cf`,
+        resourceArn: router.nodes.cdn.nodes.distribution.arn,
+        logType: "ACCESS_LOGS",
+      }, { provider: usEast1 });
+
+      const logDestination = new aws.cloudwatch.LogDeliveryDestination("CFLogDest", {
+        name: `trading-card-app-${$app.stage}-cf`,
+        outputFormat: "json",
+        deliveryDestinationConfiguration: { destinationResourceArn: cfAccessLogs.arn },
+      }, { provider: usEast1 });
+
+      new aws.cloudwatch.LogDelivery("CFLogDelivery", {
+        deliverySourceName: logSource.name,
+        deliveryDestinationArn: logDestination.arn,
+      }, { provider: usEast1, dependsOn: [logSource, logDestination] });
+    }
 
     const web = new sst.aws.StaticSite("Web", {
       path: "client",

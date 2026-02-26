@@ -14,6 +14,7 @@ export type SavedDraft = {
   cardType: string
   form: {
     teamId: string
+    teamName: string
     position: string
     jerseyNumber: string
     firstName: string

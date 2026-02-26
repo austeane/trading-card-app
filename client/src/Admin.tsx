@@ -115,6 +115,9 @@ export default function Admin() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false)
   const [activeTab, setActiveTab] = useState<'cards' | 'config' | 'assets'>('cards')
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null)
+  const [editFields, setEditFields] = useState<Record<string, string>>({})
+  const [editDirty, setEditDirty] = useState(false)
 
   // Check if admin auth is enabled on the server
   const authConfigQuery = useQuery({
@@ -366,6 +369,25 @@ export default function Admin() {
     },
   })
 
+  const updateCardMutation = useMutation({
+    mutationFn: async ({ id, fields }: { id: string; fields: Record<string, string | null> }) => {
+      const res = await fetch(api(`/admin/cards/${id}`), {
+        method: 'PATCH',
+        headers: adminHeaders,
+        body: JSON.stringify(fields),
+      })
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error ?? 'Update failed')
+      }
+      return res.json() as Promise<Card>
+    },
+    onSuccess: () => {
+      setEditDirty(false)
+      queryClient.invalidateQueries({ queryKey: ['admin-cards', statusFilter, activeTournamentId] })
+    },
+  })
+
   const renderMutation = useMutation({
     mutationFn: async (card: Card) => {
       if (!activeConfig) {
@@ -478,6 +500,58 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ['admin-cards', statusFilter, activeTournamentId] })
     },
   })
+
+  const expandCard = (card: Card) => {
+    if (expandedCardId === card.id) {
+      setExpandedCardId(null)
+      setEditFields({})
+      setEditDirty(false)
+      return
+    }
+    setExpandedCardId(card.id)
+    setEditFields({
+      firstName: (card as Record<string, unknown>).firstName as string ?? '',
+      lastName: (card as Record<string, unknown>).lastName as string ?? '',
+      teamId: (card as Record<string, unknown>).teamId as string ?? '',
+      teamName: (card as Record<string, unknown>).teamName as string ?? '',
+      position: (card as Record<string, unknown>).position as string ?? '',
+      jerseyNumber: (card as Record<string, unknown>).jerseyNumber as string ?? '',
+      photographer: card.photographer ?? '',
+      title: (card as Record<string, unknown>).title as string ?? '',
+      caption: (card as Record<string, unknown>).caption as string ?? '',
+      templateId: card.templateId ?? '',
+    })
+    setEditDirty(false)
+  }
+
+  const buildEditDiff = (card: Card): Record<string, string | null> | null => {
+    const diff: Record<string, string | null> = {}
+    const original = card as Record<string, unknown>
+    for (const [key, value] of Object.entries(editFields)) {
+      const orig = (original[key] as string) ?? ''
+      if (value !== orig) {
+        diff[key] = value || null // empty string → null (remove)
+      }
+    }
+    return Object.keys(diff).length > 0 ? diff : null
+  }
+
+  const handleSave = async (card: Card) => {
+    const diff = buildEditDiff(card)
+    if (!diff) return
+    await updateCardMutation.mutateAsync({ id: card.id, fields: diff })
+  }
+
+  const handleSaveAndRerender = async (card: Card) => {
+    const diff = buildEditDiff(card)
+    if (diff) {
+      const updatedCard = await updateCardMutation.mutateAsync({ id: card.id, fields: diff })
+      renderMutation.mutate(updatedCard)
+    } else {
+      // No field changes, just re-render
+      renderMutation.mutate(card)
+    }
+  }
 
   // Show loading state while checking auth config
   if (authConfigQuery.isPending) {
@@ -826,6 +900,12 @@ export default function Admin() {
               </div>
             )}
 
+            {updateCardMutation.isError && (
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-[var(--accent-error)]">
+                {updateCardMutation.error instanceof Error ? updateCardMutation.error.message : 'Update failed'}
+              </div>
+            )}
+
             {cardsQuery.data?.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <div className="text-4xl mb-3">📭</div>
@@ -843,13 +923,20 @@ export default function Admin() {
                     Boolean(card.templateId) &&
                     !templateOptions.some((template) => template.id === card.templateId)
                   const isRendering = renderingCardId === card.id
+                  const isExpanded = expandedCardId === card.id
+                  const isNonDraft = card.status !== 'draft'
+                  const showStandardFields = card.cardType !== 'rare'
+                  const showRareFields = card.cardType === 'rare' || card.cardType === 'super-rare'
 
                   return (
-                    <div key={card.id} className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-surface)] p-4">
+                    <div key={card.id} className={`rounded-xl border bg-[var(--bg-surface)] p-4 cursor-pointer transition-colors ${isExpanded ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]' : 'border-[var(--border-light)] hover:border-[var(--border-medium)]'}`} onClick={() => isNonDraft && expandCard(card)}>
                       <div className="flex items-start justify-between mb-3">
                         <div>
                           <span className="inline-block rounded-full bg-[var(--bg-muted)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)] capitalize">
                             {card.cardType}
+                          </span>
+                          <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${card.status === 'rendered' ? 'bg-green-100 text-green-800' : card.status === 'submitted' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600'}`}>
+                            {card.status}
                           </span>
                           <h3 className="mt-1 font-medium text-[var(--text-primary)]">
                             {cardDisplayName(card)}
@@ -865,6 +952,7 @@ export default function Admin() {
                       </label>
                       <select
                         value={card.templateId ?? ''}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(event) =>
                           templateMutation.mutate({
                             id: card.id,
@@ -897,10 +985,10 @@ export default function Admin() {
                       )}
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {card.status !== 'draft' ? (
+                        {isNonDraft ? (
                           <button
                             type="button"
-                            onClick={() => renderMutation.mutate(card)}
+                            onClick={(e) => { e.stopPropagation(); renderMutation.mutate(card) }}
                             disabled={isRendering || renderMutation.isPending}
                             className="studio-btn studio-btn-primary studio-btn-sm disabled:opacity-50"
                           >
@@ -910,13 +998,155 @@ export default function Admin() {
                         {card.status === 'draft' ? (
                           <button
                             type="button"
-                            onClick={() => setPendingDeleteId(card.id)}
+                            onClick={(e) => { e.stopPropagation(); setPendingDeleteId(card.id) }}
                             className="studio-btn studio-btn-sm text-[var(--accent-error)] border-[var(--accent-error)] hover:bg-red-50"
                           >
                             Delete
                           </button>
                         ) : null}
                       </div>
+
+                      {/* Inline edit panel */}
+                      {isExpanded && isNonDraft && (
+                        <div className="mt-4 border-t border-[var(--border-light)] pt-4" onClick={(e) => e.stopPropagation()}>
+                          <h4 className="text-sm font-semibold text-[var(--text-primary)] mb-3">Edit Fields</h4>
+
+                          <div className="grid gap-3">
+                            {showStandardFields && (
+                              <>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">First Name</label>
+                                    <input
+                                      type="text"
+                                      value={editFields.firstName ?? ''}
+                                      onChange={(e) => { setEditFields((f) => ({ ...f, firstName: e.target.value })); setEditDirty(true) }}
+                                      className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Last Name</label>
+                                    <input
+                                      type="text"
+                                      value={editFields.lastName ?? ''}
+                                      onChange={(e) => { setEditFields((f) => ({ ...f, lastName: e.target.value })); setEditDirty(true) }}
+                                      className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Position</label>
+                                    <input
+                                      type="text"
+                                      value={editFields.position ?? ''}
+                                      onChange={(e) => { setEditFields((f) => ({ ...f, position: e.target.value })); setEditDirty(true) }}
+                                      className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Jersey #</label>
+                                    <input
+                                      type="text"
+                                      value={editFields.jerseyNumber ?? ''}
+                                      onChange={(e) => { setEditFields((f) => ({ ...f, jerseyNumber: e.target.value })); setEditDirty(true) }}
+                                      className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                    />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Team Name</label>
+                                  <input
+                                    type="text"
+                                    value={editFields.teamName ?? ''}
+                                    onChange={(e) => { setEditFields((f) => ({ ...f, teamName: e.target.value })); setEditDirty(true) }}
+                                    className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                  />
+                                </div>
+                              </>
+                            )}
+
+                            {showRareFields && (
+                              <>
+                                <div>
+                                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Title</label>
+                                  <input
+                                    type="text"
+                                    value={editFields.title ?? ''}
+                                    onChange={(e) => { setEditFields((f) => ({ ...f, title: e.target.value })); setEditDirty(true) }}
+                                    className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Caption</label>
+                                  <input
+                                    type="text"
+                                    value={editFields.caption ?? ''}
+                                    onChange={(e) => { setEditFields((f) => ({ ...f, caption: e.target.value })); setEditDirty(true) }}
+                                    className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                                  />
+                                </div>
+                              </>
+                            )}
+
+                            <div>
+                              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Photographer</label>
+                              <input
+                                type="text"
+                                value={editFields.photographer ?? ''}
+                                onChange={(e) => { setEditFields((f) => ({ ...f, photographer: e.target.value })); setEditDirty(true) }}
+                                className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-0.5">Template</label>
+                              <select
+                                value={editFields.templateId ?? ''}
+                                onChange={(e) => { setEditFields((f) => ({ ...f, templateId: e.target.value })); setEditDirty(true) }}
+                                className="w-full rounded-lg border border-[var(--border-light)] bg-[var(--bg-muted)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                              >
+                                <option value="">{`Default (${defaultTemplateLabel})`}</option>
+                                {hasUnknownTemplate ? (
+                                  <option value={card.templateId ?? ''}>{`Custom (${card.templateId})`}</option>
+                                ) : null}
+                                {templateOptions.map((template) => (
+                                  <option key={template.id} value={template.id}>
+                                    {template.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSave(card)}
+                              disabled={!editDirty || updateCardMutation.isPending}
+                              className="studio-btn studio-btn-sm studio-btn-secondary disabled:opacity-50"
+                            >
+                              {updateCardMutation.isPending ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveAndRerender(card)}
+                              disabled={updateCardMutation.isPending || renderMutation.isPending}
+                              className="studio-btn studio-btn-sm studio-btn-primary disabled:opacity-50"
+                            >
+                              {(updateCardMutation.isPending || (isRendering && editDirty)) ? 'Saving & Rendering...' : 'Save & Re-render'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => renderMutation.mutate(card)}
+                              disabled={isRendering || renderMutation.isPending}
+                              className="studio-btn studio-btn-sm studio-btn-secondary disabled:opacity-50"
+                            >
+                              {isRendering ? 'Rendering...' : 'Re-render Only'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

@@ -978,48 +978,97 @@ function drawPositionStripesQc(
   const stripes = layout.positionStripes
   if (!stripes) return
 
-  // Diagonal stripe style - fixed side stripes to match Canva side accents
+  // Diagonal stripe style - position-based side stripes
   if ('style' in stripes && stripes.style === 'diagonal') {
-    const { stripeWidth, stripeGap, colors, topY, inset } = stripes
-    const bottomY = CARD_HEIGHT
+    const { stripeWidth, stripeGap, mapping } = stripes
+    const footerBar = layout.footerBar
+    if (!footerBar) return
+
+    // Build stripe colors from selected positions (mapping order defines display order)
+    const selectedPositions = _positionString.split(',').map(p => p.trim()).filter(Boolean)
+    const stripeColors: string[] = []
+    for (const m of mapping) {
+      if (selectedPositions.includes(m.position)) {
+        stripeColors.push(m.color)
+      }
+    }
+    // Fallback: if no positions selected, use the colors array for preview
+    const colors = stripeColors.length > 0 ? stripeColors : (stripes.colors ?? [])
+    if (colors.length === 0) return
+
+    const notch = footerBar.notchSize ?? 0
+    const fbHeight = footerBar.height
+    const fbY = footerBar.y
+    const bottomY = fbY + fbHeight // bottom of footer bar = bottom of card
+
+    // Derive angle from footer bar's trapezoid: notch pixels horizontal over fbHeight vertical
+    const slopeX = notch / fbHeight
+
+    // Stripes extend from card bottom to exactly the footer bar top edge
+    const topY = fbY
+    const stripeHeight = bottomY - topY
+
+    // Total horizontal inset at the top of the stripe zone (based on footer bar angle)
+    const totalInsetAtTop = slopeX * stripeHeight
+
     const step = stripeWidth + stripeGap
+    const strokeWidth = 2
 
     ctx.save()
 
-    // LEFT side: diagonal bands from edge (bottom) to inset (top)
+    // LEFT side - outermost stripe starts at card edge
     for (let i = 0; i < colors.length; i++) {
       const offset = i * step
-      const bottomStart = offset
-      const bottomEnd = offset + stripeWidth
-      const topStart = inset + offset
-      const topEnd = inset + offset + stripeWidth
+
+      // Bottom: stripe starts at offset from left edge
+      const bLeft = offset
+      const bRight = offset + stripeWidth
+
+      // Top: shifted inward by totalInsetAtTop (same angle as footer bar)
+      const tLeft = offset + totalInsetAtTop
+      const tRight = offset + stripeWidth + totalInsetAtTop
 
       ctx.beginPath()
-      ctx.moveTo(bottomStart, bottomY)
-      ctx.lineTo(bottomEnd, bottomY)
-      ctx.lineTo(topEnd, topY)
-      ctx.lineTo(topStart, topY)
+      ctx.moveTo(bLeft, bottomY)
+      ctx.lineTo(bRight, bottomY)
+      ctx.lineTo(tRight, topY)
+      ctx.lineTo(tLeft, topY)
       ctx.closePath()
       ctx.fillStyle = colors[i]
       ctx.fill()
+
+      // Black outline on each stripe
+      ctx.strokeStyle = '#000000'
+      ctx.lineWidth = strokeWidth
+      ctx.lineJoin = 'miter'
+      ctx.miterLimit = 3
+      ctx.stroke()
     }
 
-    // RIGHT side: mirrored diagonal bands
+    // RIGHT side (mirrored)
     for (let i = 0; i < colors.length; i++) {
       const offset = i * step
-      const bottomStart = CARD_WIDTH - offset
-      const bottomEnd = CARD_WIDTH - offset - stripeWidth
-      const topStart = CARD_WIDTH - inset - offset
-      const topEnd = CARD_WIDTH - inset - offset - stripeWidth
+
+      const bLeft = CARD_WIDTH - offset
+      const bRight = CARD_WIDTH - offset - stripeWidth
+
+      const tLeft = CARD_WIDTH - offset - totalInsetAtTop
+      const tRight = CARD_WIDTH - offset - stripeWidth - totalInsetAtTop
 
       ctx.beginPath()
-      ctx.moveTo(bottomStart, bottomY)
-      ctx.lineTo(bottomEnd, bottomY)
-      ctx.lineTo(topEnd, topY)
-      ctx.lineTo(topStart, topY)
+      ctx.moveTo(bLeft, bottomY)
+      ctx.lineTo(bRight, bottomY)
+      ctx.lineTo(tRight, topY)
+      ctx.lineTo(tLeft, topY)
       ctx.closePath()
       ctx.fillStyle = colors[i]
       ctx.fill()
+
+      ctx.strokeStyle = '#000000'
+      ctx.lineWidth = strokeWidth
+      ctx.lineJoin = 'miter'
+      ctx.miterLimit = 3
+      ctx.stroke()
     }
 
     ctx.restore()
@@ -1190,14 +1239,20 @@ async function renderCardFrame(
     const photographer = card.photographer ?? ''
     const teamName = team?.name ?? ''
 
-    // Draw position stripes FIRST (behind bars)
-    drawPositionStripesQc(ctx, position, layout)
+    // Draw frame/bleed area (border with inner cutout for photo)
+    drawFrame(ctx, layout)
 
     // Draw header bar with name + number (trapezoid)
     drawHeaderBar(ctx, firstName, lastName, jerseyNumber, layout)
 
     // Draw footer bar with team name (inverted trapezoid)
     drawFooterBar(ctx, teamName, layout)
+
+    // Draw position stripes ON TOP of footer bar (matching footer bar angle)
+    const cardTypeConfig = config.cardTypes.find((ct) => ct.type === card.cardType)
+    if (cardTypeConfig?.showPositionStripes !== false) {
+      drawPositionStripesQc(ctx, position, layout)
+    }
 
     // Draw overlay
     if (overlayImg && overlayPlacement === 'belowText') {

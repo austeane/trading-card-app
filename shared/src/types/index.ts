@@ -357,6 +357,12 @@ export type TournamentConfig = {
     logoOverrideKey?: string;
     positionMultiSelect?: boolean;
     maxPositions?: number;
+    showPositionField?: boolean;
+    showPositionStripes?: boolean;
+    teamFieldMode?: 'dropdown' | 'freetext';
+    teamFieldLabel?: string;
+    teamFieldDefault?: string;
+    teamFieldMaxLength?: number;
   }>;
   templates?: TemplateDefinition[];
   defaultTemplates?: TemplateDefaults;

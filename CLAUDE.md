@@ -283,6 +283,144 @@ logger.warn("Retrying upload", { attempt });
 logger.error("Upload failed", { error: String(error) });
 \`\`\`
 
+## Observability & Analytics
+
+Two log sources provide full traffic visibility. Claude is the analytics dashboard — use these queries on demand.
+
+### Log Sources
+
+| Source | Log Group | Region | What it captures |
+|--------|-----------|--------|------------------|
+| **Lambda** (API requests) | `/aws/lambda/trading-card-app-production-ApiFunction-*` | us-east-2 | Method, path, status, duration, IP, user agent, cardId, tournamentId |
+| **CloudFront** (all traffic) | `/aws/cloudfront/trading-card-app-production` | us-east-1 | Every HTTP request including static assets, cache hits/misses |
+
+### Lambda Log Queries (CloudWatch Logs Insights)
+
+```bash
+# Start an async query (returns queryId)
+AWS_PROFILE=prod aws logs start-query \
+  --log-group-name "/aws/lambda/trading-card-app-production-ApiFunction-wfmbsssc" \
+  --start-time $(date -v-1d +%s) --end-time $(date +%s) \
+  --query-string 'QUERY_HERE'
+
+# Poll for results
+AWS_PROFILE=prod aws logs get-query-results --query-id "QUERY_ID"
+```
+
+**Requests by endpoint (last 24h):**
+```
+filter ispresent(method)
+| stats count(*) as requests by path, method
+| sort requests desc
+| limit 20
+```
+
+**Error rate by endpoint:**
+```
+filter ispresent(method)
+| stats count(*) as total, sum(error) as errors by path
+| display path, total, errors, (errors/total)*100 as errorPct
+| sort errors desc
+```
+
+**Slow requests (>1s):**
+```
+filter duration > 1000
+| sort duration desc
+| limit 20
+```
+
+**Card creation funnel:**
+```
+filter path = "/cards" and method = "POST"
+  or path like /\/cards\/[a-f0-9-]+\/submit/
+| stats count(*) as cnt by path, method
+```
+
+**Traffic by IP (abuse detection):**
+```
+filter ispresent(ip)
+| stats count(*) as requests by ip
+| sort requests desc
+| limit 20
+```
+
+**Top user agents:**
+```
+filter ispresent(userAgent)
+| stats count(*) as requests by userAgent
+| sort requests desc
+| limit 10
+```
+
+### CloudFront Log Queries
+
+```bash
+# CloudFront logs are in us-east-1
+AWS_PROFILE=prod aws logs start-query \
+  --log-group-name "/aws/cloudfront/trading-card-app-production" \
+  --region us-east-1 \
+  --start-time $(date -v-1d +%s) --end-time $(date +%s) \
+  --query-string 'QUERY_HERE'
+
+AWS_PROFILE=prod aws logs get-query-results --query-id "QUERY_ID" --region us-east-1
+```
+
+CloudFront logs use W3C field names: `cs-uri-stem` (URI path), `sc-status` (HTTP status), `x-edge-result-type` (cache Hit/Miss), `x-forwarded-for` (real client IP), `cs(Referer)`, `cs(User-Agent)`, `time-taken` (seconds), `cs-method`.
+
+**Total traffic by day:**
+```
+stats count(*) as requests by bin(1d) as day
+| sort day desc
+```
+
+**Requests by URI:**
+```
+stats count(*) as requests by `cs-uri-stem`
+| sort requests desc
+| limit 20
+```
+
+**Cache hit rate:**
+```
+stats count(*) as total,
+  sum(`x-edge-result-type` = "Hit") as hits,
+  sum(`x-edge-result-type` = "Miss") as misses
+| display total, hits, misses, (hits/total)*100 as hitPct
+```
+
+**4xx/5xx breakdown:**
+```
+filter `sc-status` >= 400
+| stats count(*) as errors by `sc-status`
+| sort `sc-status` asc
+```
+
+**Traffic spike investigation (hourly):**
+```
+stats count(*) as requests,
+  sum(`sc-status` >= 400) as errors
+  by bin(1h) as hour
+| sort hour desc
+```
+
+**Top client IPs:**
+```
+stats count(*) as requests by `x-forwarded-for` as realIp
+| sort requests desc
+| limit 10
+```
+
+### Quick Tail (real-time)
+
+```bash
+# Tail Lambda logs live
+AWS_PROFILE=prod aws logs tail /aws/lambda/trading-card-app-production-ApiFunction-wfmbsssc --follow
+
+# Tail CloudFront logs live
+AWS_PROFILE=prod aws logs tail /aws/cloudfront/trading-card-app-production --follow --region us-east-1
+```
+
 ## Tech Debt & Workarounds
 
 1. **Hybrid Deployment** - Frontend deploys from austin-site, backend from this repo. Remember to deploy both when making full-stack changes.

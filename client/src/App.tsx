@@ -21,11 +21,12 @@ import {
   type Card,
   type CardType,
   type CropRect,
+  type RenderMeta,
   type TournamentConfig,
   type TournamentListEntry,
   USQC_2026_TOURNAMENT,
 } from 'shared'
-import { renderCard, renderPreviewTrim } from './renderCard'
+import { renderCard, renderPreviewTrim, resolveTemplateSnapshot } from './renderCard'
 import { api, assetUrlForKey, media, writeHeaders } from './api'
 import { saveDraft, loadDraft, clearDraft, type SavedDraft } from './draftStorage'
 import { recordFeedbackEvent } from './feedbackLog'
@@ -50,6 +51,7 @@ type FormState = {
   tournamentId: string
   cardType: CardType | ''
   teamId: string
+  teamName: string
   position: string
   jerseyNumber: string
   firstName: string
@@ -115,6 +117,7 @@ const initialForm: FormState = {
   tournamentId: '',
   cardType: '',
   teamId: '',
+  teamName: '',
   position: '',
   jerseyNumber: '',
   firstName: '',
@@ -217,7 +220,7 @@ async function updateCard(id: string, payload: SavePayload, editToken: string): 
 async function requestPresignFor(
   cardId: string,
   data: Blob,
-  kind: 'original',
+  kind: 'original' | 'render',
   editToken: string
 ): Promise<PresignResponse> {
   const res = await fetch(api('/uploads/presign'), {
@@ -322,11 +325,15 @@ async function uploadToS3(
   throw new Error('Upload failed')
 }
 
-async function submitCard(id: string, editToken: string): Promise<Card> {
+async function submitCard(
+  id: string,
+  editToken: string,
+  render?: { renderKey: string; renderMeta: unknown }
+): Promise<Card> {
   const res = await fetch(api(`/cards/${id}/submit`), {
     method: 'POST',
     headers: editHeadersFor(editToken),
-    body: JSON.stringify({}),
+    body: JSON.stringify(render ?? {}),
   })
 
   if (!res.ok) {
@@ -489,7 +496,7 @@ function App() {
   const [renderedCardUrl, setRenderedCardUrl] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
-  const [submitStatus, setSubmitStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle')
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'rendering' | 'submitting' | 'done' | 'error'>('idle')
   const [hasEdited, setHasEdited] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [pendingDraft, setPendingDraft] = useState<SavedDraft | null>(null)
@@ -619,6 +626,11 @@ function App() {
     () => tournamentConfig?.cardTypes.find((entry) => entry.type === form.cardType),
     [form.cardType, tournamentConfig]
   )
+  const isFreetextTeam = cardTypeConfig?.teamFieldMode === 'freetext'
+  const showPositionField = cardTypeConfig?.showPositionField !== false
+  const teamFieldLabel = cardTypeConfig?.teamFieldLabel ?? 'Team'
+  const teamFieldMaxLength = cardTypeConfig?.teamFieldMaxLength ?? MAX_TEAM_LENGTH
+
   const templateOptions = useMemo(() => {
     if (tournamentConfig?.templates && tournamentConfig.templates.length > 0) {
       return tournamentConfig.templates
@@ -683,8 +695,8 @@ function App() {
     tournamentId: toOptional(form.tournamentId),
     cardType: form.cardType || undefined,
     templateId: toOptional(form.templateId),
-    teamId: toOptional(form.teamId),
-    teamName: selectedTeam?.name,
+    teamId: isFreetextTeam ? undefined : toOptional(form.teamId),
+    teamName: isFreetextTeam ? toOptional(form.teamName) : selectedTeam?.name,
     position: toOptional(form.position),
     jerseyNumber: toOptional(form.jerseyNumber),
     firstName: toOptional(form.firstName),
@@ -753,6 +765,7 @@ function App() {
       cardType: payload.cardType,
       form: {
         teamId: form.teamId,
+        teamName: form.teamName,
         position: form.position,
         jerseyNumber: form.jerseyNumber,
         firstName: form.firstName,
@@ -837,6 +850,7 @@ function App() {
           cardType: form.cardType,
           form: {
             teamId: '',
+            teamName: '',
             position: '',
             jerseyNumber: '',
             firstName: '',
@@ -925,8 +939,8 @@ function App() {
 
       const payload: SavePayload = {
         templateId: toOptional(form.templateId),
-        teamId: toOptional(form.teamId),
-        teamName: selectedTeam?.name,
+        teamId: isFreetextTeam ? undefined : toOptional(form.teamId),
+        teamName: isFreetextTeam ? toOptional(form.teamName) : selectedTeam?.name,
         position: toOptional(form.position),
         jerseyNumber: toOptional(form.jerseyNumber),
         firstName: toOptional(form.firstName),
@@ -954,6 +968,7 @@ function App() {
             cardType: form.cardType,
             form: {
               teamId: form.teamId,
+              teamName: form.teamName,
               position: form.position,
               jerseyNumber: form.jerseyNumber,
               firstName: form.firstName,
@@ -983,19 +998,25 @@ function App() {
         clearTimeout(autoSaveTimeoutRef.current)
       }
     }
-  }, [form, normalizedCrop, uploadedPhoto, cardId, editToken, autoSaveStatus, uploadStatus, selectedTeam?.name])
+  }, [form, normalizedCrop, uploadedPhoto, cardId, editToken, autoSaveStatus, uploadStatus, selectedTeam?.name, isFreetextTeam])
 
   // Calculate current step for progress tracker
   const currentStep = useMemo(() => {
     if (!form.cardType) return 0
     if (!hasPhoto) return 1
     if (!normalizedCrop) return 2
+    const hasTeam = isFreetextTeam
+      ? form.teamName.trim()
+      : (!cardTypeConfig?.showTeamField || form.teamId)
     const hasRequiredDetails = form.cardType === 'rare'
       ? form.title.trim() && form.photographer.trim()
-      : form.firstName.trim() && form.lastName.trim() && form.position.trim() && form.photographer.trim()
+      : form.firstName.trim() && form.lastName.trim()
+        && (showPositionField ? form.position.trim() : true)
+        && hasTeam
+        && form.photographer.trim()
     if (!hasRequiredDetails) return 3
     return 4
-  }, [form.cardType, hasPhoto, normalizedCrop, form.firstName, form.lastName, form.position, form.title, form.photographer])
+  }, [form.cardType, hasPhoto, normalizedCrop, form.firstName, form.lastName, form.position, form.teamId, form.teamName, form.title, form.photographer, showPositionField, isFreetextTeam, cardTypeConfig?.showTeamField])
 
   // Get first incomplete field for a given step
   const getFirstIncompleteField = useCallback((stepId: StepId): HTMLElement | null => {
@@ -1016,13 +1037,13 @@ function App() {
         } else {
           if (!form.firstName.trim()) return fieldRefs.current.firstName || null
           if (!form.lastName.trim()) return fieldRefs.current.lastName || null
-          if (!form.position.trim()) return fieldRefs.current.position || null
+          if (showPositionField && !form.position.trim()) return fieldRefs.current.position || null
           if (!form.photographer.trim()) return fieldRefs.current.photographer || null
         }
         break
     }
     return null
-  }, [form.cardType, form.firstName, form.lastName, form.photographer, form.position, form.title, hasPhoto, normalizedCrop])
+  }, [form.cardType, form.firstName, form.lastName, form.photographer, form.position, form.title, hasPhoto, normalizedCrop, showPositionField])
 
   // Handler for step click - scrolls to section and focuses first incomplete field
   const handleStepClick = useCallback((stepIndex: number) => {
@@ -1047,6 +1068,7 @@ function App() {
       | 'firstName'
       | 'lastName'
       | 'teamId'
+      | 'teamName'
       | 'position'
       | 'title'
       | 'caption'
@@ -1094,18 +1116,27 @@ function App() {
         errors.lastName = `Last name must be ${MAX_NAME_LENGTH} characters or fewer`
       }
 
-      if (!position) {
-        errors.position = 'Position is required'
-      } else if (position.length > MAX_POSITION_LENGTH) {
-        errors.position = `Position must be ${MAX_POSITION_LENGTH} characters or fewer`
+      if (showPositionField) {
+        if (!position) {
+          errors.position = 'Position is required'
+        } else if (position.length > MAX_POSITION_LENGTH) {
+          errors.position = `Position must be ${MAX_POSITION_LENGTH} characters or fewer`
+        }
       }
 
-      if (cardTypeConfig?.showTeamField && !form.teamId) {
+      if (isFreetextTeam) {
+        const tn = form.teamName.trim()
+        if (!tn) {
+          errors.teamName = `${teamFieldLabel} is required`
+        } else if (tn.length > teamFieldMaxLength) {
+          errors.teamName = `${teamFieldLabel} must be ${teamFieldMaxLength} characters or fewer`
+        }
+      } else if (cardTypeConfig?.showTeamField && !form.teamId) {
         errors.teamId = 'Team is required'
       }
     }
 
-    if (form.teamId && selectedTeam?.name && selectedTeam.name.length > MAX_TEAM_LENGTH) {
+    if (!isFreetextTeam && form.teamId && selectedTeam?.name && selectedTeam.name.length > MAX_TEAM_LENGTH) {
       errors.teamId = `Team name must be ${MAX_TEAM_LENGTH} characters or fewer`
     }
 
@@ -1133,12 +1164,17 @@ function App() {
     form.photographer,
     form.position,
     form.teamId,
+    form.teamName,
     form.title,
     form.tournamentId,
     hasPhoto,
     normalizedCrop,
     cardTypeConfig,
     selectedTeam,
+    showPositionField,
+    isFreetextTeam,
+    teamFieldLabel,
+    teamFieldMaxLength,
   ])
 
   const submitMutation = useMutation({
@@ -1176,9 +1212,44 @@ function App() {
 
       await updateCard(currentCardId, buildUpdatePayload(payload), currentEditToken)
 
+      // Render card and upload before submitting
+      let render: { renderKey: string; renderMeta: RenderMeta } | undefined
+      try {
+        setSubmitStatus('rendering')
+        const timestamp = new Date().toISOString()
+        const card = buildCardForRender(timestamp)
+        if (card && tournamentConfig && cropperImageUrl) {
+          const renderBlob = await renderCard({
+            card,
+            config: tournamentConfig,
+            imageUrl: cropperImageUrl,
+            resolveAssetUrl: assetUrlForKey,
+            templateId: toOptional(form.templateId),
+          })
+          const presign = await requestPresignFor(currentCardId, renderBlob, 'render', currentEditToken)
+          await uploadToS3(presign, renderBlob)
+          const { templateId: resolvedTemplateId, templateSnapshot } = resolveTemplateSnapshot({
+            card,
+            config: tournamentConfig,
+            templateId: toOptional(form.templateId),
+          })
+          render = {
+            renderKey: presign.key,
+            renderMeta: {
+              key: presign.key,
+              templateId: resolvedTemplateId,
+              renderedAt: timestamp,
+              templateSnapshot,
+            },
+          }
+        }
+      } catch (err) {
+        console.warn('Auto-render failed, submitting without render:', err)
+      }
+
       // Submit the card
       setSubmitStatus('submitting')
-      const submitted = await submitCard(currentCardId, currentEditToken)
+      const submitted = await submitCard(currentCardId, currentEditToken, render)
       setSubmitStatus('done')
 
       return submitted
@@ -1208,6 +1279,7 @@ function App() {
     const errorMessage = error ?? (helloQuery.error instanceof Error ? helloQuery.error.message : null)
     if (errorMessage) return { message: errorMessage, tone: 'error' as const }
 
+    if (submitStatus === 'rendering') return { message: 'Generating card...', tone: 'warning' as const }
     if (submitStatus === 'submitting') return { message: 'Submitting card...', tone: 'warning' as const }
     if (submitStatus === 'done') return { message: 'Card submitted successfully!', tone: 'success' as const }
 
@@ -1232,7 +1304,7 @@ function App() {
 
   const submitButtonLabel = submitMutation.isPending ? 'Submitting...' : 'Submit Card'
 
-  const isSubmitInProgress = submitStatus === 'submitting'
+  const isSubmitInProgress = submitStatus === 'rendering' || submitStatus === 'submitting'
 
   const handleFieldChange = (key: keyof FormState) =>
     (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -1245,24 +1317,30 @@ function App() {
     const value = event.target.value as CardType | ''
     setHasEdited(true)
     setError(null)
+    const newTypeConfig = tournamentConfig?.cardTypes.find((entry) => entry.type === value)
+    const isFreetext = newTypeConfig?.teamFieldMode === 'freetext'
     setForm((prev) => {
       const next = { ...prev, cardType: value }
       if (value === 'rare') {
         return {
           ...next,
           teamId: '',
+          teamName: '',
           position: '',
           jerseyNumber: '',
           firstName: '',
           lastName: '',
         }
       }
+      const showsPosition = newTypeConfig?.showPositionField !== false
       return {
         ...next,
         title: '',
         caption: '',
-        teamId: value === 'player' || value === 'team-staff' ? next.teamId : '',
-        jerseyNumber: value === 'player' ? next.jerseyNumber : '',
+        teamId: isFreetext ? '' : (newTypeConfig?.showTeamField ? next.teamId : ''),
+        teamName: isFreetext ? (newTypeConfig?.teamFieldDefault ?? '') : '',
+        position: showsPosition ? next.position : '',
+        jerseyNumber: newTypeConfig?.showJerseyNumber ? next.jerseyNumber : '',
       }
     })
   }
@@ -1280,11 +1358,12 @@ function App() {
     setCardId(pendingDraft.cardId)
     setEditToken(pendingDraft.editToken)
 
-    // Restore form data
+    // Restore form data (default teamName for old drafts that don't have it)
     setForm({
       tournamentId: pendingDraft.tournamentId,
       cardType: pendingDraft.cardType as CardType | '',
       ...pendingDraft.form,
+      teamName: (pendingDraft.form as { teamName?: string }).teamName ?? '',
     })
     setSelectedTournamentId(pendingDraft.tournamentId)
 
@@ -1548,8 +1627,8 @@ function App() {
         firstName: toOptional(form.firstName),
         lastName: toOptional(form.lastName),
         position: toOptional(form.position),
-        teamId: toOptional(form.teamId),
-        teamName: selectedTeam?.name,
+        teamId: isFreetextTeam ? undefined : toOptional(form.teamId),
+        teamName: isFreetextTeam ? toOptional(form.teamName) : selectedTeam?.name,
         jerseyNumber: toOptional(form.jerseyNumber),
         title: toOptional(form.title),
         caption: toOptional(form.caption),
@@ -1565,9 +1644,11 @@ function App() {
       form.photographer,
       form.position,
       form.teamId,
+      form.teamName,
       form.templateId,
       form.title,
       form.tournamentId,
+      isFreetextTeam,
       normalizedCrop,
       savedCard?.createdAt,
       savedCard?.status,
@@ -2240,46 +2321,66 @@ function App() {
                       {cardTypeConfig?.showTeamField && (
                         <div>
                           <label className="studio-label">
-                            Team <span className="studio-label-required">*</span>
+                            {teamFieldLabel} <span className="studio-label-required">*</span>
                           </label>
-                          <input
-                            type="text"
-                            value={teamSearch}
-                            onChange={(e) => setTeamSearch(e.target.value)}
-                            placeholder="Search teams..."
-                            className="studio-input mb-2"
-                          />
-                          <select
-                            value={form.teamId}
-                            onChange={(e) => {
-                              handleFieldChange('teamId')(e)
-                              setTeamSearch('')
-                            }}
-                            className={`studio-input studio-select ${hasEdited && validationErrors.teamId ? 'has-error' : ''}`}
-                          >
-                            <option value="">
-                              Select team{teamSearch ? ` (${filteredTeams.length} matches)` : ''}
-                            </option>
-                            {filteredTeams.map((team) => (
-                              <option key={team.id} value={team.id}>
-                                {team.name}
-                              </option>
-                            ))}
-                          </select>
-                          {hasEdited && validationErrors.teamId && (
-                            <p className="studio-error">{validationErrors.teamId}</p>
-                          )}
-                          {selectedTeam?.logoKey && (
-                            <img
-                              src={assetUrlForKey(selectedTeam.logoKey)}
-                              alt={`${selectedTeam.name} logo`}
-                              className="team-logo mt-2"
-                            />
+                          {isFreetextTeam ? (
+                            <>
+                              <input
+                                type="text"
+                                value={form.teamName}
+                                onChange={handleFieldChange('teamName')}
+                                maxLength={teamFieldMaxLength}
+                                className={`studio-input ${hasEdited && validationErrors.teamName ? 'has-error' : ''}`}
+                                placeholder={cardTypeConfig.teamFieldDefault ?? teamFieldLabel}
+                              />
+                              {hasEdited && validationErrors.teamName && (
+                                <p className="studio-error">{validationErrors.teamName}</p>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <input
+                                type="text"
+                                value={teamSearch}
+                                onChange={(e) => setTeamSearch(e.target.value)}
+                                placeholder="Search teams..."
+                                className="studio-input mb-2"
+                              />
+                              <select
+                                value={form.teamId}
+                                onChange={(e) => {
+                                  handleFieldChange('teamId')(e)
+                                  setTeamSearch('')
+                                }}
+                                className={`studio-input studio-select ${hasEdited && validationErrors.teamId ? 'has-error' : ''}`}
+                              >
+                                <option value="">
+                                  Select team{teamSearch ? ` (${filteredTeams.length} matches)` : ''}
+                                </option>
+                                {filteredTeams.map((team) => (
+                                  <option key={team.id} value={team.id}>
+                                    {team.name}
+                                  </option>
+                                ))}
+                              </select>
+                              {hasEdited && validationErrors.teamId && (
+                                <p className="studio-error">{validationErrors.teamId}</p>
+                              )}
+                              {selectedTeam?.logoKey && (
+                                <img
+                                  src={assetUrlForKey(selectedTeam.logoKey)}
+                                  alt={`${selectedTeam.name} logo`}
+                                  className="team-logo mt-2"
+                                />
+                              )}
+                            </>
                           )}
                         </div>
                       )}
 
-                      <div className="grid grid-cols-2 gap-3">
+                      {(showPositionField || cardTypeConfig?.showJerseyNumber) && (
+                      <div className={`grid gap-3 ${showPositionField && cardTypeConfig?.showJerseyNumber ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        {showPositionField && (
                         <div>
                           <label className="studio-label">
                             Position{cardTypeConfig?.positionMultiSelect ? 's' : ''} <span className="studio-label-required">*</span>
@@ -2350,6 +2451,7 @@ function App() {
                             <p className="studio-error">{validationErrors.position}</p>
                           )}
                         </div>
+                        )}
 
                         {cardTypeConfig?.showJerseyNumber && (
                           <div>
@@ -2371,6 +2473,7 @@ function App() {
                           </div>
                         )}
                       </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -2404,10 +2507,14 @@ function App() {
                     {form.cardType === 'rare'
                       ? form.caption || 'Caption'
                       : [
-                            cardTypeConfig?.positionMultiSelect
-                              ? (form.position ? form.position.split(',').map(p => p.trim()).filter(Boolean).join(' / ') : 'Position')
-                              : (form.position || 'Position'),
-                            selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : '')
+                            showPositionField
+                              ? (cardTypeConfig?.positionMultiSelect
+                                  ? (form.position ? form.position.split(',').map(p => p.trim()).filter(Boolean).join(' / ') : 'Position')
+                                  : (form.position || 'Position'))
+                              : '',
+                            isFreetextTeam
+                              ? (form.teamName || teamFieldLabel)
+                              : (selectedTeam?.name || (cardTypeConfig?.showTeamField ? 'Team' : ''))
                           ]
                           .filter(Boolean)
                           .join(' / ')}
