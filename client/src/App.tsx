@@ -1141,9 +1141,9 @@ function App() {
     }
 
     if (cardTypeConfig?.showJerseyNumber) {
-      if (!jerseyNumber) {
+      if (!jerseyNumber && form.cardType === 'player') {
         errors.jerseyNumber = 'Jersey number is required'
-      } else if (!JERSEY_PATTERN.test(jerseyNumber)) {
+      } else if (jerseyNumber && !JERSEY_PATTERN.test(jerseyNumber)) {
         errors.jerseyNumber = 'Jersey number must be 1-2 digits'
       }
     }

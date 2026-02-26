@@ -339,7 +339,7 @@ export const QCN26_LAYOUT_V1: import('./types').Usqc26LayoutV1 = {
     ],
   },
   photographerCredit: {
-    x: 54,
+    x: 34,
     y: 984,
     fontSize: 20,
     fontStyle: '400',
