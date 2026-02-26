@@ -1140,8 +1140,12 @@ function App() {
       errors.teamId = `Team name must be ${MAX_TEAM_LENGTH} characters or fewer`
     }
 
-    if (jerseyNumber && !JERSEY_PATTERN.test(jerseyNumber)) {
-      errors.jerseyNumber = 'Jersey number must be 1-2 digits'
+    if (cardTypeConfig?.showJerseyNumber) {
+      if (!jerseyNumber) {
+        errors.jerseyNumber = 'Jersey number is required'
+      } else if (!JERSEY_PATTERN.test(jerseyNumber)) {
+        errors.jerseyNumber = 'Jersey number must be 1-2 digits'
+      }
     }
 
     if (!hasPhoto) errors.photo = 'Photo is required'
@@ -2397,12 +2401,12 @@ function App() {
                                 return (
                                   <label
                                     key={option}
-                                    className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm cursor-pointer select-none transition-colors ${
+                                    className={`inline-flex items-center gap-1.5 rounded-md border-2 px-3 py-1.5 text-sm cursor-pointer select-none transition-all ${
                                       isChecked
-                                        ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]'
+                                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white font-semibold shadow-sm'
                                         : atMax
-                                          ? 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-muted)] cursor-not-allowed opacity-50'
-                                          : 'border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:border-[var(--accent)]'
+                                          ? 'border-[var(--border-light)] bg-[var(--bg-muted)] text-[var(--text-muted)] cursor-not-allowed opacity-50'
+                                          : 'border-[var(--border-light)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)] hover:bg-[var(--bg-muted)]'
                                     }`}
                                   >
                                     <input
