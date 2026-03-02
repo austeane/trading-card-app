@@ -2048,7 +2048,11 @@ app.get('/admin/cards', async (c) => {
 
   const tournamentId = c.req.query('tournamentId')
   const limitParam = c.req.query('limit')
-  const limit = Math.min(100, Math.max(1, limitParam ? Number(limitParam) : 50))
+  const limit = Math.min(100, Math.max(1, limitParam ? Number(limitParam) : 100))
+  const cursorParam = c.req.query('cursor')
+  const exclusiveStartKey = cursorParam
+    ? JSON.parse(Buffer.from(cursorParam, 'base64').toString('utf-8'))
+    : undefined
 
   if (tournamentId) {
     const result = await ddb.send(
@@ -2067,9 +2071,13 @@ app.get('/admin/cards', async (c) => {
         },
         ScanIndexForward: false,
         Limit: limit,
+        ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
       })
     )
-    return c.json(result.Items ?? [])
+    const nextCursor = result.LastEvaluatedKey
+      ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+      : undefined
+    return c.json({ items: result.Items ?? [], nextCursor })
   }
 
   const result = await ddb.send(
@@ -2085,9 +2093,13 @@ app.get('/admin/cards', async (c) => {
       },
       ScanIndexForward: false,
       Limit: limit,
+      ...(exclusiveStartKey && { ExclusiveStartKey: exclusiveStartKey }),
     })
   )
-  return c.json(result.Items ?? [])
+  const nextCursor = result.LastEvaluatedKey
+    ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
+    : undefined
+  return c.json({ items: result.Items ?? [], nextCursor })
 })
 
 app.patch('/admin/cards/:id', async (c) => {

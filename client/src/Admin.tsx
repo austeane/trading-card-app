@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import JSZip from 'jszip'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { resolveTemplateId, type Card, type TournamentConfig, type TournamentListEntry } from 'shared'
 import { api, assetUrlForKey } from './api'
 import { renderCard, resolveTemplateSnapshot } from './renderCard'
@@ -243,17 +243,21 @@ export default function Admin() {
     return presign.key
   }
 
-  const cardsQuery = useQuery({
+  const cardsQuery = useInfiniteQuery({
     queryKey: ['admin-cards', statusFilter, activeTournamentId, adminPassword, authEnabled],
-    queryFn: async () => {
+    queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams({ status: statusFilter })
       if (activeTournamentId) params.set('tournamentId', activeTournamentId)
+      if (pageParam) params.set('cursor', pageParam)
       const res = await fetch(api(`/admin/cards?${params}`), { headers: adminHeaders })
       if (!res.ok) throw new Error('Request failed')
-      return res.json() as Promise<Card[]>
+      return res.json() as Promise<{ items: Card[]; nextCursor?: string }>
     },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !authEnabled || Boolean(adminPassword),
   })
+  const allCards = cardsQuery.data?.pages.flatMap((p) => p.items)
 
   const saveConfigMutation = useMutation({
     mutationFn: async () => {
@@ -736,7 +740,7 @@ export default function Admin() {
       <div className="border-b border-[var(--border-light)] bg-[var(--bg-surface)]">
         <div className="mx-auto flex max-w-6xl gap-1 px-6">
           {[
-            { id: 'cards' as const, label: 'Cards', count: cardsQuery.data?.length },
+            { id: 'cards' as const, label: 'Cards', count: allCards?.length },
             { id: 'config' as const, label: 'Tournament Config' },
             { id: 'assets' as const, label: 'Assets' },
           ].map((tab) => (
@@ -778,7 +782,7 @@ export default function Admin() {
                 <button
                   type="button"
                   onClick={async () => {
-                    const cardsWithRenders = cardsQuery.data?.filter((c) => c.renderKey) ?? []
+                    const cardsWithRenders = allCards?.filter((c) => c.renderKey) ?? []
                     if (cardsWithRenders.length === 0) return
 
                     const zip = new JSZip()
@@ -810,7 +814,7 @@ export default function Admin() {
                     link.click()
                     URL.revokeObjectURL(url)
                   }}
-                  disabled={!cardsQuery.data?.some((c) => c.renderKey)}
+                  disabled={!allCards?.some((c) => c.renderKey)}
                   className="studio-btn studio-btn-secondary studio-btn-sm disabled:opacity-50"
                 >
                   Download All
@@ -824,25 +828,25 @@ export default function Admin() {
                   <option value="submitted">Submitted</option>
                   <option value="rendered">Rendered</option>
                 </select>
-                {statusFilter === 'draft' && cardsQuery.data && cardsQuery.data.length > 0 && (
+                {statusFilter === 'draft' && allCards && allCards.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setShowBulkDeleteConfirm(true)}
                     className="studio-btn studio-btn-sm border-[var(--accent-error)] text-[var(--accent-error)] hover:bg-red-50"
                   >
-                    Delete All ({cardsQuery.data.length})
+                    Delete All ({allCards.length})
                   </button>
                 )}
               </div>
             </div>
 
             {/* Bulk Delete Confirmation Dialog */}
-            {showBulkDeleteConfirm && cardsQuery.data && (
+            {showBulkDeleteConfirm && allCards && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
                 <div className="mx-4 w-full max-w-md rounded-xl border border-[var(--border-light)] bg-[var(--bg-surface)] p-6 shadow-xl">
                   <h3 className="text-lg font-semibold text-[var(--text-primary)]">Delete All Drafts?</h3>
                   <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                    This will permanently delete {cardsQuery.data.length} draft card{cardsQuery.data.length === 1 ? '' : 's'}. This action cannot be undone.
+                    This will permanently delete {allCards.length} draft card{allCards.length === 1 ? '' : 's'}. This action cannot be undone.
                   </p>
                   <div className="mt-6 flex justify-end gap-3">
                     <button
@@ -854,7 +858,7 @@ export default function Admin() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => bulkDeleteMutation.mutate(cardsQuery.data.map((c) => c.id))}
+                      onClick={() => bulkDeleteMutation.mutate(allCards.map((c) => c.id))}
                       disabled={bulkDeleteMutation.isPending}
                       className="studio-btn bg-[var(--accent-error)] text-white hover:opacity-90 disabled:opacity-50"
                     >
@@ -906,14 +910,16 @@ export default function Admin() {
               </div>
             )}
 
-            {cardsQuery.data?.length === 0 ? (
+            {allCards?.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <div className="text-4xl mb-3">📭</div>
                 <p className="text-[var(--text-secondary)]">No {statusFilter} cards found</p>
               </div>
             ) : (
+              <>
+              <p className="text-xs text-[var(--text-secondary)] mb-2">Showing {allCards?.length ?? 0} card{allCards?.length === 1 ? '' : 's'}</p>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {cardsQuery.data?.map((card) => {
+                {allCards?.map((card) => {
                   const defaultTemplateId = resolveTemplateId(
                     { cardType: card.cardType },
                     activeConfig ?? undefined
@@ -1151,6 +1157,19 @@ export default function Admin() {
                   )
                 })}
               </div>
+              {cardsQuery.hasNextPage && (
+                <div className="mt-4 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => cardsQuery.fetchNextPage()}
+                    disabled={cardsQuery.isFetchingNextPage}
+                    className="studio-btn studio-btn-secondary"
+                  >
+                    {cardsQuery.isFetchingNextPage ? 'Loading...' : 'Load More'}
+                  </button>
+                </div>
+              )}
+              </>
             )}
           </section>
         )}
