@@ -40,7 +40,7 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
   const typeConfig = config.cardTypes.find((entry) => entry.type === cardType)
   const position = typeConfig?.positions?.[0] ?? 'Position'
 
-  if (cardType === 'rare' || cardType === 'super-rare') {
+  if (cardType === 'rare') {
     return {
       id: 'preview',
       tournamentId: config.id,
@@ -49,8 +49,30 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
       createdAt: now,
       updatedAt: now,
       templateId,
-      title: cardType === 'super-rare' ? 'Super Rare Edition' : 'Championship MVP',
-      caption: cardType === 'super-rare' ? 'Ultra limited showcase' : 'Limited edition showcase',
+      title: 'Championship MVP',
+      caption: 'Limited edition showcase',
+      photographer: 'Sample Photographer',
+      photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
+    }
+  }
+
+  if (cardType === 'super-rare') {
+    // Super-rare preview with player info (Dragon Wolves, Beater 12, Jordan Lopez)
+    const dragonWolves = config.teams.find((t) => t.name.toLowerCase().includes('dragon wolves')) ?? team
+    return {
+      id: 'preview',
+      tournamentId: config.id,
+      cardType,
+      status: 'draft',
+      createdAt: now,
+      updatedAt: now,
+      templateId,
+      firstName: 'Jordan',
+      lastName: 'Lopez',
+      position: 'Beater',
+      jerseyNumber: '12',
+      teamId: dragonWolves?.id,
+      teamName: dragonWolves?.name ?? 'Dragon Wolves',
       photographer: 'Sample Photographer',
       photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
     }
