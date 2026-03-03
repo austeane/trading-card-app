@@ -159,6 +159,12 @@ export type Usqc26LayoutV1 = {
     lastNameY: number;
     firstNameSize: number;
     lastNameSize: number;
+    firstNameFontFamily?: string;
+    lastNameFontFamily?: string;
+    firstNameStrokeWidth?: number;
+    lastNameStrokeWidth?: number;
+    nameGap?: number;
+    bottomBarOffset?: number;
   };
   nationalTeam: {
     rotation: number;

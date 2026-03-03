@@ -668,6 +668,60 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius:
   ctx.closePath()
 }
 
+/**
+ * Draws a white-themed bottom bar for super-rare cards.
+ * Uses white for all elements (camera icon, photographer, rarity, right info).
+ */
+function drawBottomBarSuperRare(
+  ctx: CanvasRenderingContext2D,
+  photographer: string,
+  rightText: string,
+  layout: Usqc26LayoutV1,
+  cameraImg?: HTMLImageElement | null
+) {
+  const { bottomBar, superRare, typography } = layout
+  const { cameraIcon, photographerX, rarityX, raritySize, rarityGap, teamNameX, fontSize, letterSpacing } = bottomBar
+  // Use bottomBarOffset if provided, otherwise use default y
+  const barY = superRare.bottomBarOffset ? (CARD_HEIGHT - superRare.bottomBarOffset) : bottomBar.y
+  const textY = barY + bottomBar.textYOffset
+
+  ctx.save()
+  ctx.font = `500 ${fontSize}px ${typography.fontFamily}`
+  ctx.fillStyle = '#ffffff' // White for super-rare
+  ctx.textBaseline = 'middle'
+
+  // Camera icon - use white (no tint needed since icon is already white)
+  if (cameraImg) {
+    const iconY = barY + (bottomBar.textYOffset - cameraIcon.height / 2) - 1
+    ctx.drawImage(cameraImg, cameraIcon.x, iconY, cameraIcon.width, cameraIcon.height)
+  } else {
+    // Fallback rectangle
+    ctx.fillStyle = '#ffffff'
+    roundedRect(ctx, cameraIcon.x, barY + 3, cameraIcon.width, cameraIcon.height, 2)
+    ctx.fill()
+  }
+
+  // Photographer name (white)
+  ctx.fillStyle = '#ffffff'
+  ctx.textAlign = 'left'
+  ctx.letterSpacing = `${letterSpacing.photographer}px`
+  ctx.fillText(photographer.toUpperCase(), photographerX, textY)
+
+  // Rarity indicator - two stars for super-rare (white)
+  ctx.fillStyle = '#ffffff'
+  drawStar(ctx, rarityX + raritySize / 2, barY + 13, raritySize / 2, 5)
+  ctx.fill()
+  drawStar(ctx, rarityX + raritySize / 2 + raritySize + rarityGap, barY + 13, raritySize / 2, 5)
+  ctx.fill()
+
+  // Right text (white, right-aligned)
+  ctx.textAlign = 'right'
+  ctx.letterSpacing = `${letterSpacing.teamName}px`
+  ctx.fillText(rightText.toUpperCase(), teamNameX, textY)
+
+  ctx.restore()
+}
+
 function drawGradientOverlay(ctx: CanvasRenderingContext2D, theme: TemplateTheme) {
   ctx.save()
   const gradient = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT)
@@ -853,20 +907,42 @@ function drawSuperRareName(
   lastName: string,
   layout: Usqc26LayoutV1
 ) {
-  const { superRare, palette, typography } = layout
-  const { centerX, firstNameY, lastNameY, firstNameSize, lastNameSize } = superRare
+  const { superRare, palette } = layout
+  const {
+    centerX,
+    firstNameY,
+    lastNameY,
+    firstNameSize,
+    lastNameSize,
+    firstNameFontFamily,
+    lastNameFontFamily,
+    firstNameStrokeWidth,
+    lastNameStrokeWidth,
+  } = superRare
 
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
 
-  // First name (smaller, above)
-  ctx.font = `500 ${firstNameSize}px ${typography.fontFamily}`
-  ctx.fillStyle = palette.white
+  // First name: Amifer, light blue (secondary) fill with dark blue (primary) stroke, ALL CAPS
+  ctx.font = `500 ${firstNameSize}px ${firstNameFontFamily ?? '"Amifer", sans-serif'}`
+  // Draw stroke first (underneath)
+  ctx.strokeStyle = palette.primary
+  ctx.lineWidth = firstNameStrokeWidth ?? 3
+  ctx.strokeText(firstName.toUpperCase(), centerX, firstNameY)
+  // Then fill with light blue (secondary)
+  ctx.fillStyle = palette.secondary
   ctx.fillText(firstName.toUpperCase(), centerX, firstNameY)
 
-  // Last name (larger, below) - with italic style
-  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
+  // Last name: Cinema Script, white fill with dark blue (primary) stroke
+  ctx.font = `400 ${lastNameSize}px ${lastNameFontFamily ?? '"Cinema Script", cursive'}`
+  // Draw stroke first
+  ctx.strokeStyle = palette.primary
+  ctx.lineWidth = lastNameStrokeWidth ?? 4
+  ctx.strokeText(lastName, centerX, lastNameY)
+  // Then fill with white
   ctx.fillStyle = palette.white
   ctx.fillText(lastName, centerX, lastNameY)
 
@@ -1217,10 +1293,15 @@ async function renderCardFrame(
       `500 ${layout.positionNumber.numberFontSize}px ${fontFamily}`,
       `500 italic ${layout.name.firstNameSize}px ${fontFamily}`,
       `500 italic ${layout.name.lastNameSize}px ${fontFamily}`,
-      `500 ${layout.superRare.firstNameSize}px ${fontFamily}`,
-      `500 italic ${layout.superRare.lastNameSize}px ${fontFamily}`,
       `500 ${layout.nationalTeam.nameFontSize}px ${fontFamily}`,
     ])
+    // Super rare fonts (may use different font families)
+    const srFirstNameFont = layout.superRare.firstNameFontFamily ?? fontFamily
+    const srLastNameFont = layout.superRare.lastNameFontFamily ?? '"Cinema Script", cursive'
+    fontLoads.add(`500 ${layout.superRare.firstNameSize}px ${srFirstNameFont}`)
+    fontLoads.add(`400 ${layout.superRare.lastNameSize}px ${srLastNameFont}`)
+    // Also load Cinema Script explicitly
+    fontLoads.add(`400 ${layout.superRare.lastNameSize}px "Cinema Script"`)
     if (layout.headerBar) {
       fontLoads.add(`${layout.headerBar.fontStyle} ${layout.headerBar.fontSize}px ${fontFamily}`)
     }
@@ -1319,9 +1400,12 @@ async function renderCardFrame(
       const caption = 'caption' in card ? card.caption ?? '' : ''
       drawRareCardContent(ctx, title, caption, layout)
     }
+    // Note: super-rare content is drawn later, after overlay check
 
-    // 4. Draw the frame overlay
-    drawFrame(ctx, layout)
+    // 4. Draw the frame overlay (skip for super-rare - full bleed)
+    if (card.cardType !== 'super-rare') {
+      drawFrame(ctx, layout)
+    }
 
     if (overlayImg && overlayPlacement === 'belowText') {
       drawOverlay(ctx, overlayImg)
@@ -1359,20 +1443,25 @@ async function renderCardFrame(
       drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
 
     } else if (card.cardType === 'super-rare') {
-      // Super rare: centered name style
+      // Super rare: full bleed (no frame), centered name style with Cinema Script
+      // NOTE: Frame is skipped for super-rare - drawFrame is not called
+
       const firstName = 'firstName' in card ? card.firstName ?? '' : ''
       const lastName = 'lastName' in card ? card.lastName ?? '' : ''
       drawSuperRareName(ctx, firstName, lastName, layout)
 
-      // Position and number for super-rare
-      if ('position' in card && card.position && 'jerseyNumber' in card && card.jerseyNumber) {
-        drawPositionNumber(ctx, card.position, card.jerseyNumber, layout)
+      // Position and number only shown if they exist (typically for player/team-staff super-rares)
+      const position = 'position' in card ? card.position : undefined
+      const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+      if (position && jerseyNumber) {
+        drawPositionNumber(ctx, position, jerseyNumber, layout)
       }
 
-      // Bottom bar
+      // White-themed bottom bar for super-rare
       const photographer = card.photographer ?? ''
-      const teamName = team?.name ?? ''
-      drawBottomBar(ctx, photographer, teamName, layout, 'super-rare', cameraImg)
+      // Right text: team name if available, otherwise position (for media/official/etc)
+      const rightText = team?.name ?? position ?? ''
+      drawBottomBarSuperRare(ctx, photographer, rightText, layout, cameraImg)
 
     } else if (card.cardType === 'national-team') {
       // National team (uncommon): name at top
