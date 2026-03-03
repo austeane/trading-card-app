@@ -452,7 +452,7 @@ const getPublicPath = (key: string) => {
 
 const toPublicCard = (card: Card) => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { photo, editToken, ...rest } = card
+  const { photo, editToken, reviewStatus, ...rest } = card
 
   if (!photo?.crop) {
     return rest

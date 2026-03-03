@@ -416,7 +416,14 @@ export default function Admin() {
   })
 
   const updateCardMutation = useMutation({
-    mutationFn: async ({ id, fields }: { id: string; fields: Record<string, string | null> }) => {
+    mutationFn: async ({
+      id,
+      fields,
+    }: {
+      id: string
+      fields: Record<string, string | null>
+      resetEditDirty?: boolean
+    }) => {
       const res = await fetch(api(`/admin/cards/${id}`), {
         method: 'PATCH',
         headers: adminHeaders,
@@ -428,8 +435,10 @@ export default function Admin() {
       }
       return res.json() as Promise<Card>
     },
-    onSuccess: () => {
-      setEditDirty(false)
+    onSuccess: (_card, variables) => {
+      if (variables.resetEditDirty) {
+        setEditDirty(false)
+      }
       queryClient.invalidateQueries({ queryKey: ['admin-cards', statusFilter, activeTournamentId] })
     },
   })
@@ -585,13 +594,17 @@ export default function Admin() {
   const handleSave = async (card: Card) => {
     const diff = buildEditDiff(card)
     if (!diff) return
-    await updateCardMutation.mutateAsync({ id: card.id, fields: diff })
+    await updateCardMutation.mutateAsync({ id: card.id, fields: diff, resetEditDirty: true })
   }
 
   const handleSaveAndRerender = async (card: Card) => {
     const diff = buildEditDiff(card)
     if (diff) {
-      const updatedCard = await updateCardMutation.mutateAsync({ id: card.id, fields: diff })
+      const updatedCard = await updateCardMutation.mutateAsync({
+        id: card.id,
+        fields: diff,
+        resetEditDirty: true,
+      })
       renderMutation.mutate(updatedCard)
     } else {
       // No field changes, just re-render
