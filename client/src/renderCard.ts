@@ -244,8 +244,9 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  ctx.lineJoin = 'miter'
-  ctx.miterLimit = 2
+  // Use round joins to prevent artifacts at character edges with negative letter spacing
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
 
   // Position label - #1B4278 fill with #FFFFFF stroke
   ctx.font = `500 ${positionFontSize}px ${typography.fontFamily}`
@@ -270,14 +271,47 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
     // Use measured height plus a small gap for consistent spacing
     const numberY = topY + actualPositionHeight + 2
 
-    // Jersey number - #FFFFFF 67% opaque fill with #1B4278 stroke
+    // Jersey number - #FFFFFF 67% opaque fill with #1B4278 outer-only stroke
+    // Use offscreen canvas to create outer-only stroke effect:
+    // 1. Draw stroke on offscreen canvas
+    // 2. Cut out the inside with destination-out
+    // 3. Composite outer stroke onto main canvas
+    // 4. Draw fill directly on main canvas (blends with actual background)
     ctx.font = `500 ${numberFontSize}px ${typography.fontFamily}`
     ctx.letterSpacing = `${numberLetterSpacing}px`
-    // Draw stroke first (underneath)
-    ctx.strokeStyle = palette.primary
-    ctx.lineWidth = numberStrokeWidth
-    ctx.strokeText(number, centerX + numberXOffset, numberY)
-    // Then fill with white 67% opacity
+
+    // Create offscreen canvas for the outer-only stroke
+    const offCanvas = document.createElement('canvas')
+    offCanvas.width = CARD_WIDTH
+    offCanvas.height = CARD_HEIGHT
+    const offCtx = offCanvas.getContext('2d')
+
+    if (offCtx) {
+      // Copy font settings to offscreen context
+      offCtx.font = ctx.font
+      offCtx.letterSpacing = ctx.letterSpacing
+      offCtx.textAlign = 'center'
+      offCtx.textBaseline = 'top'
+      offCtx.lineJoin = 'round'
+      offCtx.lineCap = 'round'
+
+      // Draw the full stroke on offscreen canvas
+      offCtx.strokeStyle = palette.primary
+      offCtx.lineWidth = numberStrokeWidth
+      offCtx.strokeText(number, centerX + numberXOffset, numberY)
+
+      // Cut out the inside of the text (where fill will go)
+      // This leaves only the outer half of the stroke
+      offCtx.globalCompositeOperation = 'destination-out'
+      offCtx.fillStyle = '#000000' // Color doesn't matter for cutout
+      offCtx.fillText(number, centerX + numberXOffset, numberY)
+
+      // Composite the outer-only stroke onto main canvas
+      ctx.drawImage(offCanvas, 0, 0)
+    }
+
+    // Draw the 67% white fill directly on main canvas
+    // This blends with the actual background, not the stroke
     ctx.fillStyle = palette.numberOverlay
     ctx.fillText(number, centerX + numberXOffset, numberY)
   }

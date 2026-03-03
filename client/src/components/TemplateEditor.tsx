@@ -662,6 +662,7 @@ export default function TemplateEditor({ config, onChange, uploadOverlay, onSave
               config={config}
               templateId={selectedTemplate.id}
               templateLabel={selectedTemplate.label}
+              includeDisabledTypes
             />
           ) : (
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-xs text-slate-400">

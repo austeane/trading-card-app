@@ -40,17 +40,17 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
   const typeConfig = config.cardTypes.find((entry) => entry.type === cardType)
   const position = typeConfig?.positions?.[0] ?? 'Position'
 
-  if (cardType === 'rare') {
+  if (cardType === 'rare' || cardType === 'super-rare') {
     return {
       id: 'preview',
       tournamentId: config.id,
-      cardType: 'rare',
+      cardType,
       status: 'draft',
       createdAt: now,
       updatedAt: now,
       templateId,
-      title: 'Championship MVP',
-      caption: 'Limited edition showcase',
+      title: cardType === 'super-rare' ? 'Super Rare Edition' : 'Championship MVP',
+      caption: cardType === 'super-rare' ? 'Ultra limited showcase' : 'Limited edition showcase',
       photographer: 'Sample Photographer',
       photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
     }
@@ -81,12 +81,16 @@ type TemplatePreviewProps = {
   config: TournamentConfig
   templateId: string
   templateLabel: string
+  /** When true, includes disabled card types like 'super-rare' in preview options */
+  includeDisabledTypes?: boolean
 }
 
-export default function TemplatePreview({ config, templateId, templateLabel }: TemplatePreviewProps) {
+export default function TemplatePreview({ config, templateId, templateLabel, includeDisabledTypes }: TemplatePreviewProps) {
   const enabledCardTypes = useMemo(
-    () => config.cardTypes.filter((entry) => entry.enabled !== false).map((entry) => entry.type),
-    [config.cardTypes]
+    () => config.cardTypes
+      .filter((entry) => includeDisabledTypes || entry.enabled !== false)
+      .map((entry) => entry.type),
+    [config.cardTypes, includeDisabledTypes]
   )
   const [cardType, setCardType] = useState<CardType>(enabledCardTypes[0] ?? 'player')
   const [viewMode, setViewMode] = useState<ViewMode>('trim')
