@@ -44,7 +44,7 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
     return {
       id: 'preview',
       tournamentId: config.id,
-      cardType: 'rare',
+      cardType,
       status: 'draft',
       createdAt: now,
       updatedAt: now,
@@ -52,6 +52,28 @@ const buildSampleCard = (config: TournamentConfig, cardType: CardType, templateI
       title: 'Championship MVP',
       caption: 'Limited edition showcase',
       photographer: 'Sample Photographer',
+      photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
+    }
+  }
+
+  if (cardType === 'super-rare') {
+    // Super-rare preview with player info (Dragon Wolves, Beater 12, Jordan Lopez)
+    const dragonWolves = config.teams.find((t) => t.name.toLowerCase().includes('dragon wolves')) ?? team
+    return {
+      id: 'preview',
+      tournamentId: config.id,
+      cardType,
+      status: 'draft',
+      createdAt: now,
+      updatedAt: now,
+      templateId,
+      firstName: 'Bao',
+      lastName: 'Hoang',
+      position: 'Beater',
+      jerseyNumber: '12',
+      teamId: dragonWolves?.id,
+      teamName: dragonWolves?.name ?? 'Dragon Wolves',
+      photographer: 'Photographer',
       photo: { crop: { x: 0, y: 0, w: 1, h: 1, rotateDeg: 0 } },
     }
   }
@@ -81,12 +103,16 @@ type TemplatePreviewProps = {
   config: TournamentConfig
   templateId: string
   templateLabel: string
+  /** When true, includes disabled card types like 'super-rare' in preview options */
+  includeDisabledTypes?: boolean
 }
 
-export default function TemplatePreview({ config, templateId, templateLabel }: TemplatePreviewProps) {
+export default function TemplatePreview({ config, templateId, templateLabel, includeDisabledTypes }: TemplatePreviewProps) {
   const enabledCardTypes = useMemo(
-    () => config.cardTypes.filter((entry) => entry.enabled !== false).map((entry) => entry.type),
-    [config.cardTypes]
+    () => config.cardTypes
+      .filter((entry) => includeDisabledTypes || entry.enabled !== false)
+      .map((entry) => entry.type),
+    [config.cardTypes, includeDisabledTypes]
   )
   const [cardType, setCardType] = useState<CardType>(enabledCardTypes[0] ?? 'player')
   const [viewMode, setViewMode] = useState<ViewMode>('trim')

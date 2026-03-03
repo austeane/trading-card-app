@@ -18,6 +18,8 @@ import {
 
 // Camera icon for bottom bar
 import cameraIconUrl from './assets/icons/camera.png'
+// Super rare symbol (two gold stars)
+import superRareSymbolUrl from './assets/icons/super-rare-symbol.png'
 
 const BASE_THEME: TemplateTheme = {
   gradientStart: 'rgba(15, 23, 42, 0)',
@@ -244,8 +246,9 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  ctx.lineJoin = 'miter'
-  ctx.miterLimit = 2
+  // Use round joins to prevent artifacts at character edges with negative letter spacing
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
 
   // Position label - #1B4278 fill with #FFFFFF stroke
   ctx.font = `500 ${positionFontSize}px ${typography.fontFamily}`
@@ -270,14 +273,47 @@ function drawPositionNumber(ctx: CanvasRenderingContext2D, position: string, num
     // Use measured height plus a small gap for consistent spacing
     const numberY = topY + actualPositionHeight + 2
 
-    // Jersey number - #FFFFFF 67% opaque fill with #1B4278 stroke
+    // Jersey number - #FFFFFF 67% opaque fill with #1B4278 outer-only stroke
+    // Use offscreen canvas to create outer-only stroke effect:
+    // 1. Draw stroke on offscreen canvas
+    // 2. Cut out the inside with destination-out
+    // 3. Composite outer stroke onto main canvas
+    // 4. Draw fill directly on main canvas (blends with actual background)
     ctx.font = `500 ${numberFontSize}px ${typography.fontFamily}`
     ctx.letterSpacing = `${numberLetterSpacing}px`
-    // Draw stroke first (underneath)
-    ctx.strokeStyle = palette.primary
-    ctx.lineWidth = numberStrokeWidth
-    ctx.strokeText(number, centerX + numberXOffset, numberY)
-    // Then fill with white 67% opacity
+
+    // Create offscreen canvas for the outer-only stroke
+    const offCanvas = document.createElement('canvas')
+    offCanvas.width = CARD_WIDTH
+    offCanvas.height = CARD_HEIGHT
+    const offCtx = offCanvas.getContext('2d')
+
+    if (offCtx) {
+      // Copy font settings to offscreen context
+      offCtx.font = ctx.font
+      offCtx.letterSpacing = ctx.letterSpacing
+      offCtx.textAlign = 'center'
+      offCtx.textBaseline = 'top'
+      offCtx.lineJoin = 'round'
+      offCtx.lineCap = 'round'
+
+      // Draw the full stroke on offscreen canvas
+      offCtx.strokeStyle = palette.primary
+      offCtx.lineWidth = numberStrokeWidth
+      offCtx.strokeText(number, centerX + numberXOffset, numberY)
+
+      // Cut out the inside of the text (where fill will go)
+      // This leaves only the outer half of the stroke
+      offCtx.globalCompositeOperation = 'destination-out'
+      offCtx.fillStyle = '#000000' // Color doesn't matter for cutout
+      offCtx.fillText(number, centerX + numberXOffset, numberY)
+
+      // Composite the outer-only stroke onto main canvas
+      ctx.drawImage(offCanvas, 0, 0)
+    }
+
+    // Draw the 67% white fill directly on main canvas
+    // This blends with the actual background, not the stroke
     ctx.fillStyle = palette.numberOverlay
     ctx.fillText(number, centerX + numberXOffset, numberY)
   }
@@ -634,6 +670,63 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius:
   ctx.closePath()
 }
 
+/**
+ * Draws a white-themed bottom bar for super-rare cards.
+ * Uses white for all elements (camera icon, photographer, rarity, right info).
+ */
+function drawBottomBarSuperRare(
+  ctx: CanvasRenderingContext2D,
+  photographer: string,
+  rightText: string,
+  layout: Usqc26LayoutV1,
+  cameraImg?: HTMLImageElement | null,
+  superRareSymbolImg?: HTMLImageElement | null
+) {
+  const { bottomBar, superRare, typography } = layout
+  const { cameraIcon, photographerX, teamNameX, fontSize, letterSpacing } = bottomBar
+  // Use bottomBarOffset if provided, otherwise use default y
+  const barY = superRare.bottomBarOffset ? (CARD_HEIGHT - superRare.bottomBarOffset) : bottomBar.y
+  const textY = barY + bottomBar.textYOffset
+
+  ctx.save()
+  ctx.font = `500 ${fontSize}px ${typography.fontFamily}`
+  ctx.fillStyle = '#ffffff' // White for super-rare
+  ctx.textBaseline = 'middle'
+
+  // Camera icon - use white (no tint needed since icon is already white)
+  if (cameraImg) {
+    const iconY = barY + (bottomBar.textYOffset - cameraIcon.height / 2) - 1
+    ctx.drawImage(cameraImg, cameraIcon.x, iconY, cameraIcon.width, cameraIcon.height)
+  } else {
+    // Fallback rectangle
+    ctx.fillStyle = '#ffffff'
+    roundedRect(ctx, cameraIcon.x, barY + 3, cameraIcon.width, cameraIcon.height, 2)
+    ctx.fill()
+  }
+
+  // Photographer name (white)
+  ctx.fillStyle = '#ffffff'
+  ctx.textAlign = 'left'
+  ctx.letterSpacing = `${letterSpacing.photographer}px`
+  ctx.fillText(photographer.toUpperCase(), photographerX, textY)
+
+  // Super rare symbol - centered horizontally
+  if (superRareSymbolImg) {
+    const symbolWidth = superRareSymbolImg.naturalWidth
+    const symbolHeight = superRareSymbolImg.naturalHeight
+    const symbolX = (CARD_WIDTH - symbolWidth) / 2
+    const symbolY = barY + (bottomBar.textYOffset - symbolHeight / 2) - 12
+    ctx.drawImage(superRareSymbolImg, symbolX, symbolY, symbolWidth, symbolHeight)
+  }
+
+  // Right text (white, right-aligned)
+  ctx.textAlign = 'right'
+  ctx.letterSpacing = `${letterSpacing.teamName}px`
+  ctx.fillText(rightText.toUpperCase(), teamNameX, textY)
+
+  ctx.restore()
+}
+
 function drawGradientOverlay(ctx: CanvasRenderingContext2D, theme: TemplateTheme) {
   ctx.save()
   const gradient = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT)
@@ -819,20 +912,42 @@ function drawSuperRareName(
   lastName: string,
   layout: Usqc26LayoutV1
 ) {
-  const { superRare, palette, typography } = layout
-  const { centerX, firstNameY, lastNameY, firstNameSize, lastNameSize } = superRare
+  const { superRare, palette } = layout
+  const {
+    centerX,
+    firstNameY,
+    lastNameY,
+    firstNameSize,
+    lastNameSize,
+    firstNameFontFamily,
+    lastNameFontFamily,
+    firstNameStrokeWidth,
+    lastNameStrokeWidth,
+  } = superRare
 
   ctx.save()
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
 
-  // First name (smaller, above)
-  ctx.font = `500 ${firstNameSize}px ${typography.fontFamily}`
-  ctx.fillStyle = palette.white
+  // First name: Amifer, light blue (secondary) fill with dark blue (primary) stroke, ALL CAPS
+  ctx.font = `500 ${firstNameSize}px ${firstNameFontFamily ?? '"Amifer", sans-serif'}`
+  // Draw stroke first (underneath)
+  ctx.strokeStyle = palette.primary
+  ctx.lineWidth = firstNameStrokeWidth ?? 3
+  ctx.strokeText(firstName.toUpperCase(), centerX, firstNameY)
+  // Then fill with light blue (secondary)
+  ctx.fillStyle = palette.secondary
   ctx.fillText(firstName.toUpperCase(), centerX, firstNameY)
 
-  // Last name (larger, below) - with italic style
-  ctx.font = `500 italic ${lastNameSize}px ${typography.fontFamily}`
+  // Last name: Cinema Script, white fill with dark blue (primary) stroke
+  ctx.font = `400 ${lastNameSize}px ${lastNameFontFamily ?? '"Cinema Script", cursive'}`
+  // Draw stroke first
+  ctx.strokeStyle = palette.primary
+  ctx.lineWidth = lastNameStrokeWidth ?? 4
+  ctx.strokeText(lastName, centerX, lastNameY)
+  // Then fill with white
   ctx.fillStyle = palette.white
   ctx.fillText(lastName, centerX, lastNameY)
 
@@ -1152,12 +1267,16 @@ async function renderCardFrame(
   crop: CropRect
 ) {
   const { card, config, imageUrl, resolveAssetUrl } = input
-  const { templateSnapshot } = resolveTemplateSnapshot({
+  const { templateId: effectiveTemplateId, templateSnapshot } = resolveTemplateSnapshot({
     card,
     config,
     templateId: input.templateId,
   })
   const layout = asUsqc26Layout(templateSnapshot.layout)
+
+  // Check if we should render as super-rare (either card type is super-rare OR template is super-rare)
+  const eligibleForSuperRare = ['player', 'team-staff', 'media', 'official', 'tournament-staff', 'super-rare'].includes(card.cardType)
+  const renderAsSuperRare = card.cardType === 'super-rare' || (eligibleForSuperRare && effectiveTemplateId === 'super-rare')
   if (!layout) {
     // Render error state for missing or invalid layout
     ctx.fillStyle = '#f87171'
@@ -1183,10 +1302,15 @@ async function renderCardFrame(
       `500 ${layout.positionNumber.numberFontSize}px ${fontFamily}`,
       `500 italic ${layout.name.firstNameSize}px ${fontFamily}`,
       `500 italic ${layout.name.lastNameSize}px ${fontFamily}`,
-      `500 ${layout.superRare.firstNameSize}px ${fontFamily}`,
-      `500 italic ${layout.superRare.lastNameSize}px ${fontFamily}`,
       `500 ${layout.nationalTeam.nameFontSize}px ${fontFamily}`,
     ])
+    // Super rare fonts (may use different font families)
+    const srFirstNameFont = layout.superRare.firstNameFontFamily ?? fontFamily
+    const srLastNameFont = layout.superRare.lastNameFontFamily ?? '"Cinema Script", cursive'
+    fontLoads.add(`500 ${layout.superRare.firstNameSize}px ${srFirstNameFont}`)
+    fontLoads.add(`400 ${layout.superRare.lastNameSize}px ${srLastNameFont}`)
+    // Also load Cinema Script explicitly
+    fontLoads.add(`400 ${layout.superRare.lastNameSize}px "Cinema Script"`)
     if (layout.headerBar) {
       fontLoads.add(`${layout.headerBar.fontStyle} ${layout.headerBar.fontSize}px ${fontFamily}`)
     }
@@ -1272,22 +1396,25 @@ async function renderCardFrame(
     // Standard USQC-style rendering path
 
     // 3. Draw content boxes BEFORE the frame (so frame covers them)
-    const isStandardPlayer = card.cardType !== 'rare' && card.cardType !== 'super-rare' && card.cardType !== 'national-team'
+    const isStandardPlayer = card.cardType !== 'rare' && !renderAsSuperRare && card.cardType !== 'national-team'
     if (isStandardPlayer) {
       const firstName = 'firstName' in card ? card.firstName ?? '' : ''
       const lastName = 'lastName' in card ? card.lastName ?? '' : ''
       if (firstName || lastName) {
         drawAngledNameBoxes(ctx, firstName, lastName, layout)
       }
-    } else if (card.cardType === 'rare') {
+    } else if (card.cardType === 'rare' && !renderAsSuperRare) {
       // Rare card: draw title/caption boxes before frame
       const title = 'title' in card ? card.title ?? 'Rare Card' : 'Rare Card'
       const caption = 'caption' in card ? card.caption ?? '' : ''
       drawRareCardContent(ctx, title, caption, layout)
     }
+    // Note: super-rare content is drawn later, after overlay check
 
-    // 4. Draw the frame overlay
-    drawFrame(ctx, layout)
+    // 4. Draw the frame overlay (skip for super-rare - full bleed)
+    if (!renderAsSuperRare) {
+      drawFrame(ctx, layout)
+    }
 
     if (overlayImg && overlayPlacement === 'belowText') {
       drawOverlay(ctx, overlayImg)
@@ -1318,27 +1445,37 @@ async function renderCardFrame(
     const cameraImg = await loadImageSafe(cameraIconUrl)
 
     // 8. Draw card-type-specific content
-    if (card.cardType === 'rare') {
-      // Rare card: title/caption already drawn before frame
-      // Just draw bottom bar
-      const photographer = card.photographer ?? ''
-      drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
+    if (renderAsSuperRare) {
+      // Super rare: full bleed (no frame), centered name style with Cinema Script
+      // Can be triggered by cardType === 'super-rare' OR templateId === 'super-rare'
+      // NOTE: Frame is skipped for super-rare - drawFrame is not called
+      // NOTE: Position/number NOT shown in upper right for super-rare (only event badge)
 
-    } else if (card.cardType === 'super-rare') {
-      // Super rare: centered name style
       const firstName = 'firstName' in card ? card.firstName ?? '' : ''
       const lastName = 'lastName' in card ? card.lastName ?? '' : ''
       drawSuperRareName(ctx, firstName, lastName, layout)
 
-      // Position and number for super-rare
-      if ('position' in card && card.position && 'jerseyNumber' in card && card.jerseyNumber) {
-        drawPositionNumber(ctx, card.position, card.jerseyNumber, layout)
-      }
+      // Load super rare symbol
+      const superRareSymbolImg = await loadImageSafe(superRareSymbolUrl)
 
-      // Bottom bar
+      // White-themed bottom bar for super-rare
       const photographer = card.photographer ?? ''
-      const teamName = team?.name ?? ''
-      drawBottomBar(ctx, photographer, teamName, layout, 'super-rare', cameraImg)
+      const position = 'position' in card ? card.position : undefined
+      const jerseyNumber = 'jerseyNumber' in card ? card.jerseyNumber : undefined
+      // Right text: "#[number] [position]" for player/team-staff, otherwise position
+      let rightText = ''
+      if (jerseyNumber && position) {
+        rightText = `#${jerseyNumber} ${position}`
+      } else if (position) {
+        rightText = position
+      }
+      drawBottomBarSuperRare(ctx, photographer, rightText, layout, cameraImg, superRareSymbolImg)
+
+    } else if (card.cardType === 'rare') {
+      // Rare card: title/caption already drawn before frame
+      // Just draw bottom bar
+      const photographer = card.photographer ?? ''
+      drawBottomBar(ctx, photographer, 'RARE CARD', layout, 'rare', cameraImg)
 
     } else if (card.cardType === 'national-team') {
       // National team (uncommon): name at top

@@ -159,6 +159,12 @@ export type Usqc26LayoutV1 = {
     lastNameY: number;
     firstNameSize: number;
     lastNameSize: number;
+    firstNameFontFamily?: string;
+    lastNameFontFamily?: string;
+    firstNameStrokeWidth?: number;
+    lastNameStrokeWidth?: number;
+    nameGap?: number;
+    bottomBarOffset?: number;
   };
   nationalTeam: {
     rotation: number;
@@ -281,6 +287,8 @@ export type CardPhoto = {
   cropKey?: string;
 };
 
+export type ReviewStatus = 'new' | 'approved' | 'rejected' | 'duplicate' | 'need-sr' | 'fix-required' | 'done';
+
 export type CardBase = {
   id: string;
   editToken?: string;
@@ -289,6 +297,7 @@ export type CardBase = {
   rarity?: CardRarity;
   templateId?: string;
   status: CardStatus;
+  reviewStatus?: ReviewStatus;
   photographer?: string;
   photo?: CardPhoto;
   renderKey?: string;
