@@ -580,6 +580,8 @@ export default function Admin() {
   }
 
   const buildEditDiff = (card: Card): Record<string, string | null> | null => {
+    // Only apply editFields if this is the card currently being edited
+    if (expandedCardId !== card.id) return null
     const diff: Record<string, string | null> = {}
     const original = card as Record<string, unknown>
     for (const [key, value] of Object.entries(editFields)) {
